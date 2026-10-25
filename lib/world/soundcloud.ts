@@ -1,0 +1,223 @@
+// Tracks are streamed from the artists' own SoundCloud uploads through the official, visible widget,
+// so nothing is rehosted; the Widget API only starts them, moves through the list and sets the volume.
+export const PLAYLIST = [
+  "https://soundcloud.com/myabandonedhome/snowfall-w-oneheart",
+  "https://soundcloud.com/hisohkah/school-rooftop",
+  "https://soundcloud.com/scizzie/aquatic-ambience",
+  "https://soundcloud.com/j0wdrixcikus/molchat-doma-sudno-boris-rizhiyslowed",
+];
+const API_SRC = "https://w.soundcloud.com/player/api.js";
+
+const WIDGET_OPTIONS = {
+  color: "#a8c4ff",
+  hide_related: "true",
+  show_comments: "false",
+  show_user: "true",
+  show_reposts: "false",
+  show_teaser: "false",
+  visual: "false",
+};
+
+// Widget.load() takes real booleans: the string "false" would count as true and switch to the big visual player
+const LOAD_OPTIONS = {
+  auto_play: true,
+  color: WIDGET_OPTIONS.color,
+  hide_related: true,
+  show_comments: false,
+  show_user: true,
+  show_reposts: false,
+  show_teaser: false,
+  visual: false,
+};
+
+export function widgetSrc(autoPlay = false, url = PLAYLIST[0]) {
+  const params = new URLSearchParams({ url, auto_play: String(autoPlay), ...WIDGET_OPTIONS });
+  return `https://w.soundcloud.com/player/?${params}`;
+}
+
+type Sound = { title?: string; duration?: number; artwork_url?: string | null; user?: { username?: string; avatar_url?: string } };
+type Widget = {
+  bind(event: string, cb: (e?: { currentPosition?: number }) => void): void;
+  play(): void;
+  pause(): void;
+  toggle(): void;
+  seekTo(ms: number): void;
+  setVolume(v: number): void;
+  isPaused(cb: (paused: boolean) => void): void;
+  getCurrentSound(cb: (s: Sound | null) => void): void;
+  load(url: string, options: Record<string, unknown>): void;
+};
+type SCGlobal = { Widget: ((el: HTMLIFrameElement) => Widget) & { Events: Record<string, string> } };
+
+/** What the iPod shows: mirrors the widget's current sound and position. */
+export type NowPlaying = {
+  title: string;
+  artist: string;
+  artwork: string | null;
+  position: number;
+  duration: number;
+  playing: boolean;
+  index: number;
+  count: number;
+};
+
+let apiLoading: Promise<SCGlobal> | null = null;
+function loadApi() {
+  apiLoading ??= new Promise((resolve, reject) => {
+    const existing = (window as unknown as { SC?: SCGlobal }).SC;
+    if (existing) return resolve(existing);
+    const s = document.createElement("script");
+    s.src = API_SRC;
+    s.async = true;
+    s.onload = () => resolve((window as unknown as { SC: SCGlobal }).SC);
+    s.onerror = () => reject(new Error("SoundCloud widget API failed to load"));
+    document.head.appendChild(s);
+  });
+  return apiLoading;
+}
+
+export class SoundCloudMusic {
+  private widget?: Widget;
+  private volume = 0.6;
+  private bound = false;
+  private index = 0;
+  ready: Promise<boolean>;
+  state: NowPlaying = { title: "snowfall", artist: "reidenshi", artwork: null, position: 0, duration: 0, playing: false, index: 0, count: PLAYLIST.length };
+
+  constructor(private frame: HTMLIFrameElement) {
+    this.ready = this.connect();
+    this.bindMediaKeys();
+  }
+
+  private connect() {
+    return loadApi()
+      .then(
+        (SC) =>
+          new Promise<boolean>((resolve) => {
+            const w = SC.Widget(this.frame);
+            const timeout = window.setTimeout(() => resolve(false), 8000);
+            w.bind(SC.Widget.Events.READY, () => {
+              window.clearTimeout(timeout);
+              this.widget = w;
+              w.setVolume(Math.round(this.volume * 100));
+              this.refreshSound();
+              // Bindings survive load(), so they are attached once
+              if (!this.bound) {
+                this.bound = true;
+                w.bind(SC.Widget.Events.FINISH, () => this.skip(1));
+                w.bind(SC.Widget.Events.PLAY, () => {
+                  this.state.playing = true;
+                  if (navigator.mediaSession) navigator.mediaSession.playbackState = "playing";
+                  w.setVolume(Math.round(this.volume * 100));
+                  this.refreshSound();
+                });
+                w.bind(SC.Widget.Events.PAUSE, () => {
+                  this.state.playing = false;
+                  if (navigator.mediaSession) navigator.mediaSession.playbackState = "paused";
+                });
+                w.bind(SC.Widget.Events.PLAY_PROGRESS, (e) => {
+                  if (e?.currentPosition !== undefined) this.state.position = e.currentPosition;
+                });
+              }
+              resolve(true);
+            });
+          })
+      )
+      .catch(() => false);
+  }
+
+  private refreshSound() {
+    this.widget?.getCurrentSound((s) => {
+      if (!s) return;
+      const art = s.artwork_url ?? s.user?.avatar_url ?? null;
+      this.state = {
+        ...this.state,
+        title: s.title ?? this.state.title,
+        artist: s.user?.username ?? this.state.artist,
+        // Ask for the larger artwork variant; the default is tiny
+        artwork: art ? art.replace("-large.", "-t300x300.") : null,
+        duration: s.duration ?? 0,
+        index: this.index,
+      };
+      this.updateMediaSession();
+    });
+  }
+
+  /**
+   * The keyboard's previous / next / play keys, through the browser's media session (they also drive the OS
+   * now-playing panel, which shows the track and its artwork).
+   */
+  bindMediaKeys() {
+    const ms = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
+    if (!ms) return;
+    const set = (action: MediaSessionAction, fn: () => void) => {
+      try {
+        ms.setActionHandler(action, fn);
+      } catch {
+        // Not every browser knows every action
+      }
+    };
+    set("nexttrack", () => this.skip(1));
+    set("previoustrack", () => this.skip(-1));
+    set("play", () => this.widget?.play());
+    set("pause", () => this.widget?.pause());
+  }
+
+  private updateMediaSession() {
+    if (typeof navigator === "undefined" || !navigator.mediaSession || typeof MediaMetadata === "undefined") return;
+    const { title, artist, artwork } = this.state;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title,
+      artist,
+      album: "blue hour",
+      artwork: artwork ? [{ src: artwork, sizes: "300x300", type: "image/jpeg" }] : [],
+    });
+  }
+
+  /**
+   * Call from the click itself. Plays through the widget API; if the browser still kept it paused, the player is
+   * reloaded with autoplay on, which the browser allows now that the page has been clicked.
+   */
+  start() {
+    this.widget?.setVolume(Math.round(this.volume * 100));
+    this.widget?.play();
+    window.setTimeout(() => {
+      if (!this.widget) return this.reloadPlaying();
+      this.widget.isPaused((paused) => {
+        if (paused) this.reloadPlaying();
+      });
+    }, 1500);
+  }
+
+  private reloadPlaying() {
+    this.widget = undefined;
+    this.bound = false;
+    this.frame.src = widgetSrc(true, PLAYLIST[this.index]);
+    this.ready = this.connect();
+  }
+
+  /** Next (1) or previous (-1) track, wrapping around the list. */
+  skip(step: number) {
+    this.index = (this.index + step + PLAYLIST.length) % PLAYLIST.length;
+    this.state = { ...this.state, position: 0, duration: 0, index: this.index };
+    this.widget?.load(PLAYLIST[this.index], LOAD_OPTIONS);
+  }
+
+  toggle() {
+    this.widget?.toggle();
+  }
+
+  pause() {
+    this.widget?.pause();
+  }
+
+  play() {
+    this.widget?.play();
+  }
+
+  /** 0-1 */
+  setVolume(v: number) {
+    this.volume = Math.max(0, Math.min(1, v));
+    this.widget?.setVolume(Math.round(this.volume * 100));
+  }
+}

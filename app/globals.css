@@ -1,0 +1,185 @@
+:root {
+  /* Old film subtitle yellow: every line of UI is set in it */
+  --ink: #f3d548;
+  --night: #0b1530;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--night);
+  color: var(--ink);
+  font-family: var(--font-serif), Georgia, serif;
+  /* A thin dark edge, like burnt-in subtitles, so the yellow holds over bright snow */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75), 0 0 1px rgba(0, 0, 0, 0.9), 0 0 8px rgba(0, 0, 0, 0.35);
+  -webkit-font-smoothing: antialiased;
+}
+
+.stage {
+  position: fixed;
+  inset: 0;
+}
+
+.stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.veil {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.4rem;
+  text-align: center;
+  cursor: pointer;
+  background: radial-gradient(ellipse at 50% 55%, rgba(40, 64, 140, 0.05), rgba(6, 10, 28, 0.55));
+  user-select: none;
+}
+
+.veil h1 {
+  font-weight: 400;
+  font-size: clamp(1.9rem, 4.2vw, 3.2rem);
+  line-height: 1.1;
+}
+
+.veil h1 span {
+  display: inline-block;
+  white-space: pre;
+}
+
+.veil p {
+  font-style: italic;
+  font-size: 1.15rem;
+}
+
+.veil small {
+  font-size: 0.95rem;
+  opacity: 0.7;
+  max-width: 32rem;
+  line-height: 1.6;
+  padding: 0 16px;
+}
+
+/* Bottom centre, where a subtitle would sit, between the map and the iPod */
+.hud {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 22px;
+  display: flex;
+  justify-content: center;
+  font-size: 1.05rem;
+  opacity: 0.92;
+  pointer-events: none;
+  animation: minimap-in 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+}
+
+.hud span + span::before {
+  content: "·";
+  margin: 0 0.6em;
+}
+
+.crosshair {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%;
+  background: rgba(235, 242, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(8, 12, 24, 0.35), 0 0 6px rgba(200, 225, 255, 0.35);
+  pointer-events: none;
+  transition: transform 0.12s ease-out, opacity 0.12s;
+}
+
+/* A one-line instruction under the crosshair, set like a subtitle */
+.prompt {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: calc(50% + 46px);
+  text-align: center;
+  font-style: italic;
+  font-size: 1.35rem;
+  pointer-events: none;
+  animation: prompt-in 0.35s ease-out both;
+}
+
+@keyframes prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.toast {
+  position: fixed;
+  top: 24px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 1.15rem;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.minimap {
+  position: fixed;
+  left: 28px;
+  bottom: 28px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0.92;
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.45));
+  /* Arrives with the iPod, a moment into the walk */
+  animation: minimap-in 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+}
+
+.sc-player {
+  position: fixed;
+  right: 28px;
+  top: 24px;
+  width: 300px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  z-index: 5;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.sc-player.is-on {
+  opacity: 0.8;
+  visibility: visible;
+  pointer-events: auto;
+  animation: minimap-in 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+}
+
+@keyframes minimap-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+    filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0)) blur(6px);
+  }
+}
+
+/* The iPod's own full-resolution canvas, over the bottom-right of the world */
+.stage .ipod-vm {
+  position: fixed;
+  pointer-events: none;
+}
