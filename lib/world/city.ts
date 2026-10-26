@@ -25,7 +25,9 @@ const CAR_DECKS: [number, number, number][] = [
  * Footprint in plan; `top` (world height) makes it something you can climb onto instead of a wall.
  * `height` is only for thrown things: how tall the obstacle is when it isn't climbable.
  */
-export type Collider = { minX: number; maxX: number; minZ: number; maxZ: number; top?: number; height?: number };
+// top: you can stand on it (and step or jump up onto it); bottom: it starts this high (you walk under it); height: for
+// snowballs only, how tall a box without a top stands
+export type Collider = { minX: number; maxX: number; minZ: number; maxZ: number; top?: number; height?: number; bottom?: number };
 export type LightSource = {
   position: THREE.Vector3;
   color: THREE.Color;
@@ -513,5 +515,5 @@ export function buildCity(scene: THREE.Scene, models: Models = {}) {
     });
   }
 
-  return { colliders, buildingColliders, groups, lights, buildingSets, trail, carMeshes, shop, station, park };
+  return { colliders, buildingColliders, groups, lights, buildingSets, trail, carMeshes, cars, shop, station, park };
 }

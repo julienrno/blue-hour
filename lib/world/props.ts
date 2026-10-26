@@ -160,7 +160,7 @@ export function streetLampGeometry() {
   arm.translate(-0.72, 7.95, 0);
   const head = new RoundedBoxGeometry(0.95, 0.2, 0.42, 3, 0.08);
   head.translate(-1.55, 7.9, 0);
-  return mergeGeometries([pole, base, arm, head].map((g) => g.toNonIndexed()))!;
+  return mergeGeometries([pole, base, arm, head].map((g) => (g.index ? g.toNonIndexed() : g)))!;
 }
 
 export function parkLampGeometry() {

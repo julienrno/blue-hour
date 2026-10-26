@@ -3,12 +3,19 @@ import type { SoundCloudMusic } from "./soundcloud";
 
 
 // Wind, steps and the street's small sounds sit well below full level so the music stays in front
-const ENV_LEVEL = 0.6325;
-const MUSIC_LEVEL = 0.6;
+const ENV_LEVEL = 0.696;
+const MUSIC_LEVEL = 0.54;
+// One full alarm cycle (s): warble, pulse, whoops, hi-lo
+// A car alarm: one pitch beeping in time with the indicators (a beat is one flash, on for its first ALARM_ON)
+export const ALARM_BEAT = 0.42;
+export const ALARM_ON = 0.55;
+export const ALARM_LENGTH = 18 * ALARM_BEAT;
 
 export class Soundscape {
   ctx: AudioContext;
   private master: GainNode;
+  // Mute sits after everything (master is also moved by ducking, so it can't double as the switch)
+  private mute: GainNode;
   private windGain: GainNode;
   private gustGain: GainNode;
   private windFilter?: BiquadFilterNode;
@@ -27,7 +34,8 @@ export class Soundscape {
     this.ctx = new AudioContext();
     this.master = this.ctx.createGain();
     this.master.gain.value = ENV_LEVEL;
-    this.master.connect(this.ctx.destination);
+    this.mute = this.ctx.createGain();
+    this.master.connect(this.mute).connect(this.ctx.destination);
 
     this.outdoorFilter = this.ctx.createBiquadFilter();
     this.outdoorFilter.type = "lowpass";
@@ -226,6 +234,55 @@ export class Soundscape {
     this.windFilter?.frequency.setTargetAtTime(480 + g * 380, now, 0.4);
   }
 
+  /**
+   * Air roaring past while you fall: a deep buffeting rumble and a rising tearing hiss, both swelling with speed.
+   * Built the first time it is needed and left running silent after that.
+   */
+  fallWind(level: number) {
+    if (this.ctx.state !== "running") return;
+    const now = this.ctx.currentTime;
+    if (!this.rush) {
+      if (level < 0.01) return;
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      const rumble = this.ctx.createBufferSource();
+      rumble.buffer = this.noise(4, true);
+      rumble.loop = true;
+      const low = this.ctx.createBiquadFilter();
+      low.type = "lowpass";
+      low.frequency.value = 160;
+      const lowGain = this.ctx.createGain();
+      lowGain.gain.value = 3.2;
+      rumble.connect(low).connect(lowGain).connect(gain);
+      const hiss = this.ctx.createBufferSource();
+      hiss.buffer = this.noise(3, false);
+      hiss.loop = true;
+      const band = this.ctx.createBiquadFilter();
+      band.type = "bandpass";
+      band.Q.value = 0.6;
+      band.frequency.value = 500;
+      const hissGain = this.ctx.createGain();
+      hissGain.gain.value = 0.16;
+      hiss.connect(band).connect(hissGain).connect(gain);
+      // Slow swirl in the level, like the air catching your ears at different angles
+      const swirl = this.ctx.createOscillator();
+      swirl.frequency.value = 0.9;
+      const swirlDepth = this.ctx.createGain();
+      swirlDepth.gain.value = 0.25;
+      const swirlGain = this.ctx.createGain();
+      swirlGain.gain.value = 1;
+      swirl.connect(swirlDepth).connect(swirlGain.gain);
+      gain.connect(swirlGain).connect(this.master);
+      rumble.start();
+      hiss.start();
+      swirl.start();
+      this.rush = { gain, band };
+    }
+    this.rush.gain.gain.setTargetAtTime(level * 0.55, now, 0.25);
+    this.rush.band.frequency.setTargetAtTime(500 + level * 1700, now, 0.3);
+  }
+  private rush?: { gain: GainNode; band: BiquadFilterNode };
+
   step(intensity: number) {
     if (this.ctx.state !== "running") return;
     const src = this.ctx.createBufferSource();
@@ -249,6 +306,124 @@ export class Soundscape {
     g.gain.value = (0.18 + intensity * 0.22) * 0.9;
     src.connect(lp).connect(g).connect(this.master);
     src.start();
+  }
+
+  /**
+   * A car alarm going off, the way the real ones sound bouncing between the blocks: a harsh horn speaker (two
+   * detuned buzzy oscillators, clipped and peaked around 2 kHz) beeping one tone in time with the indicators, with
+   * a slap of echo off the facades. Panned toward the car and
+   * quieter with distance. Returns how long it runs (s), so the indicators flash for exactly as long.
+   */
+  carAlarm(distance: number, pan: number) {
+    if (this.ctx.state !== "running") return ALARM_LENGTH;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const end = now + ALARM_LENGTH;
+
+    const freq = ctx.createConstantSource();
+    freq.offset.value = 1250;
+    // One tone, beeping with the flashes: a few milliseconds of ramp on each edge so the beeps don't click
+    const gate = ctx.createGain();
+    gate.gain.setValueAtTime(0, now);
+    for (let t = now; t < end - 0.01; t += ALARM_BEAT) {
+      gate.gain.setValueAtTime(0, t);
+      gate.gain.linearRampToValueAtTime(1, t + 0.006);
+      gate.gain.setValueAtTime(1, t + ALARM_BEAT * ALARM_ON - 0.006);
+      gate.gain.linearRampToValueAtTime(0, t + ALARM_BEAT * ALARM_ON);
+    }
+
+    const voice = (type: OscillatorType, detune: number) => {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.value = 0;
+      o.detune.value = detune;
+      freq.connect(o.frequency);
+      o.start(now);
+      o.stop(end + 0.05);
+      return o;
+    };
+    const mix = ctx.createGain();
+    mix.gain.value = 0.5;
+    voice("sawtooth", 0).connect(mix);
+    voice("square", 9).connect(mix);
+    // A small, overdriven horn speaker
+    const drive = ctx.createWaveShaper();
+    const curve = new Float32Array(512);
+    for (let i = 0; i < curve.length; i++) {
+      const x = (i / (curve.length - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * 3.2);
+    }
+    drive.curve = curve;
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 450;
+    const horn = ctx.createBiquadFilter();
+    horn.type = "peaking";
+    horn.frequency.value = 2100;
+    horn.Q.value = 1.4;
+    horn.gain.value = 8;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 4800;
+    // Distance takes the top off as well as the level
+    lp.frequency.value = 4800 / (1 + distance * 0.02);
+
+    const out = ctx.createGain();
+    const level = 0.2 / (1 + distance * 0.05);
+    out.gain.setValueAtTime(0, now);
+    out.gain.linearRampToValueAtTime(level, now + 0.015);
+    out.gain.setValueAtTime(level, end - 0.04);
+    out.gain.linearRampToValueAtTime(0, end);
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, pan));
+
+    // The street answers: a slapback off the blocks across the road, darker and on the other side
+    const echo = ctx.createDelay(1);
+    echo.delayTime.value = 0.16 + Math.random() * 0.05;
+    const echoTone = ctx.createBiquadFilter();
+    echoTone.type = "lowpass";
+    echoTone.frequency.value = 2200;
+    const echoBack = ctx.createGain();
+    echoBack.gain.value = 0.32;
+    const echoOut = ctx.createGain();
+    echoOut.gain.value = 0.45;
+    const echoPan = ctx.createStereoPanner();
+    echoPan.pan.value = -panner.pan.value * 0.6;
+
+    mix.connect(gate).connect(drive).connect(hp).connect(horn).connect(lp).connect(out);
+    out.connect(panner).connect(this.outdoorFilter);
+    out.connect(echo);
+    echo.connect(echoTone).connect(echoBack).connect(echo);
+    echoTone.connect(echoOut).connect(echoPan).connect(this.outdoorFilter);
+    freq.start(now);
+    freq.stop(end + 0.05);
+    return ALARM_LENGTH;
+  }
+
+  /** A hand or boot on a cold steel rung: a short dull clank. */
+  rung() {
+    if (this.ctx.state !== "running") return;
+    const now = this.ctx.currentTime;
+    const ping = this.ctx.createOscillator();
+    ping.type = "triangle";
+    ping.frequency.value = 520 + Math.random() * 140;
+    const pg = this.ctx.createGain();
+    pg.gain.setValueAtTime(0.07, now);
+    pg.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    ping.connect(pg).connect(this.master);
+    ping.start(now);
+    ping.stop(now + 0.14);
+    const tap = this.ctx.createBufferSource();
+    tap.buffer = this.noise(0.04, false);
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = 2200;
+    bp.Q.value = 1.2;
+    const tg = this.ctx.createGain();
+    tg.gain.setValueAtTime(0.12, now);
+    tg.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    tap.connect(bp).connect(tg).connect(this.master);
+    tap.start(now);
   }
 
   /** A lamp switching on somewhere nearby: a relay click and a short swell of mains hum, quieter with distance. */
@@ -365,10 +540,11 @@ export class Soundscape {
     gsap.to(this.musicLevel, { v: on ? MUSIC_LEVEL * 0.4 : MUSIC_LEVEL, duration: 1.2, onUpdate: this.applyMusic });
   }
 
-  toggleMute() {
-    this.muted = !this.muted;
+  /** Everything, ambience and music together. */
+  setMuted(muted: boolean) {
+    this.muted = muted;
+    this.mute.gain.setTargetAtTime(muted ? 0 : 1, this.ctx.currentTime, 0.08);
     this.applyMusic();
-    return this.muted;
   }
 
   dispose() {

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 // Instrument Serif (OFL), self-hosted: a narrow, film-title serif for every line of UI, set like old subtitles
@@ -24,7 +25,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={serif.variable}>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* Page views on Vercel (no cookies); does nothing when running locally */}
+        <Analytics />
+      </body>
     </html>
   );
 }

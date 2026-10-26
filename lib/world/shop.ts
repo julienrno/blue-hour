@@ -661,7 +661,7 @@ export class ShopView implements Venue {
     const hum = inside ? 1 : (0.1 + 0.35 * eased) / (1 + dist * 0.18);
 
     let prompt: string | null = null;
-    if (this.loaded && this.near(camera) && !this.wantOpen) prompt = inside ? "e to leave" : "e to go in";
+    if (this.loaded && this.near(camera) && !this.wantOpen) prompt = inside ? "leave" : "go in";
     return { prompt, inside: this.insideLevel, hum, closed };
   }
 }

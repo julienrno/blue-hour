@@ -16,7 +16,7 @@ const SPLAT_FADE_END = 90;
 
 type Ball = { mesh: THREE.Mesh; vel: THREE.Vector3; age: number; live: boolean };
 // `thin`: a pole or trunk, too narrow for a flat splat to sit on, so it only bursts
-type Hit = { point: THREE.Vector3; normal: THREE.Vector3; hard: boolean; thin?: boolean };
+type Hit = { point: THREE.Vector3; normal: THREE.Vector3; hard: boolean; thin?: boolean; object?: THREE.Object3D };
 
 /** Ground under a point: the snow mesh, or the ice on the pond. */
 function surface(x: number, z: number) {
@@ -41,6 +41,8 @@ function heightOf(c: Collider) {
 export class Snowballs {
   group = new THREE.Group();
   onSplat?: (point: THREE.Vector3, hard: boolean) => void;
+  /** Every impact, with the mesh it struck when it hit real geometry (a building, a car). */
+  onHit?: (point: THREE.Vector3, object?: THREE.Object3D) => void;
   /** A splat just stuck at `point`: something that moves (a sliding door) can take it along with `attach`. */
   onStick?: (mesh: THREE.Object3D, point: THREE.Vector3) => void;
   private balls: Ball[] = [];
@@ -176,7 +178,8 @@ export class Snowballs {
     let nearSolid = false;
     for (const c of this.colliders()) {
       // Buildings and cars have real meshes: their boxes only say "look closer"
-      const meshed = c.top !== undefined || heightOf(c) >= 60;
+      // (Benches carry both a seat top and a height: a plain box is close enough for those)
+      const meshed = (c.top !== undefined && c.height === undefined) || heightOf(c) >= 60;
       const pad = meshed ? 0.8 : 0;
       if (to.x < c.minX - pad || to.x > c.maxX + pad || to.z < c.minZ - pad || to.z > c.maxZ + pad) continue;
       const top = heightOf(c);
@@ -229,7 +232,7 @@ export class Snowballs {
     } else this.m.copy(hit.object.matrixWorld);
     const normal = hit.face.normal.clone().transformDirection(this.m);
     if (normal.dot(dir) > 0) normal.negate();
-    return { point: hit.point.clone(), normal, hard: true };
+    return { point: hit.point.clone(), normal, hard: true, object: hit.object };
   }
 
   private splat(hit: Hit, vel: THREE.Vector3) {
@@ -276,5 +279,6 @@ export class Snowballs {
     }
     pos.needsUpdate = true;
     this.onSplat?.(hit.point, hit.hard);
+    this.onHit?.(hit.point, hit.object);
   }
 }

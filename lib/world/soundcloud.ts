@@ -2,8 +2,8 @@
 // so nothing is rehosted; the Widget API only starts them, moves through the list and sets the volume.
 export const PLAYLIST = [
   "https://soundcloud.com/myabandonedhome/snowfall-w-oneheart",
-  "https://soundcloud.com/hisohkah/school-rooftop",
   "https://soundcloud.com/scizzie/aquatic-ambience",
+  "https://soundcloud.com/hisohkah/school-rooftop",
   "https://soundcloud.com/j0wdrixcikus/molchat-doma-sudno-boris-rizhiyslowed",
 ];
 const API_SRC = "https://w.soundcloud.com/player/api.js";
@@ -78,15 +78,37 @@ function loadApi() {
 
 export class SoundCloudMusic {
   private widget?: Widget;
-  private volume = 0.6;
+  private volume = 0.54;
   private bound = false;
   private index = 0;
   ready: Promise<boolean>;
   state: NowPlaying = { title: "snowfall", artist: "reidenshi", artwork: null, position: 0, duration: 0, playing: false, index: 0, count: PLAYLIST.length };
 
+  // What each track is called (and its artwork), known ahead so the iPod can switch the moment you skip instead of
+  // waiting for SoundCloud to load the next one and report back
+  private meta: ({ title: string; artist: string; artwork: string | null; duration?: number } | undefined)[] = [];
+
   constructor(private frame: HTMLIFrameElement) {
     this.ready = this.connect();
     this.bindMediaKeys();
+    this.prefetch();
+  }
+
+  private prefetch() {
+    PLAYLIST.forEach((url, i) => {
+      fetch(`https://soundcloud.com/oembed?format=json&url=${encodeURIComponent(url)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j: { title?: string; author_name?: string; thumbnail_url?: string } | null) => {
+          if (!j || this.meta[i]) return;
+          const artist = j.author_name ?? "";
+          // oEmbed titles read "track by artist"
+          const full = j.title ?? "";
+          const suffix = ` by ${artist}`;
+          const title = full.endsWith(suffix) ? full.slice(0, -suffix.length) : full;
+          this.meta[i] = { title, artist, artwork: j.thumbnail_url ?? null };
+        })
+        .catch(() => undefined);
+    });
   }
 
   private connect() {
@@ -108,6 +130,8 @@ export class SoundCloudMusic {
                 w.bind(SC.Widget.Events.PLAY, () => {
                   this.state.playing = true;
                   if (navigator.mediaSession) navigator.mediaSession.playbackState = "playing";
+                  // A new track starting in the iframe would take the keys back to it
+                  window.setTimeout(() => this.holdMediaKeys(), 300);
                   w.setVolume(Math.round(this.volume * 100));
                   this.refreshSound();
                 });
@@ -139,14 +163,30 @@ export class SoundCloudMusic {
         duration: s.duration ?? 0,
         index: this.index,
       };
+      this.meta[this.index] = { title: this.state.title, artist: this.state.artist, artwork: this.state.artwork, duration: this.state.duration };
       this.updateMediaSession();
     });
   }
 
   /**
    * The keyboard's previous / next / play keys, through the browser's media session (they also drive the OS
-   * now-playing panel, which shows the track and its artwork).
+   * now-playing panel, which shows the track and its artwork). The music itself plays inside SoundCloud's iframe,
+   * and the browser sends the keys to the frame that is playing, where nothing listens for next / previous. A
+   * silent loop playing in the page itself makes this page the one the keys go to.
    */
+  private anchor?: HTMLAudioElement;
+
+  private holdMediaKeys() {
+    if (typeof document === "undefined") return;
+    if (!this.anchor) {
+      this.anchor = new Audio(silentWav());
+      this.anchor.loop = true;
+      this.anchor.volume = 0.01;
+    }
+    void this.anchor.play().catch(() => undefined);
+    this.updateMediaSession();
+  }
+
   bindMediaKeys() {
     const ms = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
     if (!ms) return;
@@ -159,8 +199,8 @@ export class SoundCloudMusic {
     };
     set("nexttrack", () => this.skip(1));
     set("previoustrack", () => this.skip(-1));
-    set("play", () => this.widget?.play());
-    set("pause", () => this.widget?.pause());
+    set("play", () => this.play());
+    set("pause", () => this.pause());
   }
 
   private updateMediaSession() {
@@ -179,6 +219,7 @@ export class SoundCloudMusic {
    * reloaded with autoplay on, which the browser allows now that the page has been clicked.
    */
   start() {
+    this.holdMediaKeys();
     this.widget?.setVolume(Math.round(this.volume * 100));
     this.widget?.play();
     window.setTimeout(() => {
@@ -199,7 +240,18 @@ export class SoundCloudMusic {
   /** Next (1) or previous (-1) track, wrapping around the list. */
   skip(step: number) {
     this.index = (this.index + step + PLAYLIST.length) % PLAYLIST.length;
-    this.state = { ...this.state, position: 0, duration: 0, index: this.index };
+    const known = this.meta[this.index];
+    this.state = {
+      ...this.state,
+      title: known?.title ?? "…",
+      artist: known?.artist ?? "",
+      artwork: known?.artwork ?? null,
+      position: 0,
+      duration: known?.duration ?? 0,
+      playing: true,
+      index: this.index,
+    };
+    this.updateMediaSession();
     this.widget?.load(PLAYLIST[this.index], LOAD_OPTIONS);
   }
 
@@ -209,10 +261,12 @@ export class SoundCloudMusic {
 
   pause() {
     this.widget?.pause();
+    if (navigator.mediaSession) navigator.mediaSession.playbackState = "paused";
   }
 
   play() {
     this.widget?.play();
+    this.holdMediaKeys();
   }
 
   /** 0-1 */
@@ -220,4 +274,27 @@ export class SoundCloudMusic {
     this.volume = Math.max(0, Math.min(1, v));
     this.widget?.setVolume(Math.round(this.volume * 100));
   }
+}
+
+/** Half a second of silence as a WAV, for the page's own media-key anchor. */
+function silentWav() {
+  const rate = 8000;
+  const samples = rate / 2;
+  const buf = new ArrayBuffer(44 + samples * 2);
+  const v = new DataView(buf);
+  const text = (o: number, t: string) => [...t].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+  text(0, "RIFF");
+  v.setUint32(4, 36 + samples * 2, true);
+  text(8, "WAVE");
+  text(12, "fmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  text(36, "data");
+  v.setUint32(40, samples * 2, true);
+  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
 }

@@ -2,3 +2,9 @@ node_modules
 .next
 next-env.d.ts
 *.tsbuildinfo
+
+# macOS and scratch files
+.DS_Store
+.cartex.png
+cartex-tmp.png
+.vercel

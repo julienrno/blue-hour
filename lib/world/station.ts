@@ -376,7 +376,7 @@ export class StationView implements Venue {
     for (const o of this.detail) o.visible = dist < DETAIL_DISTANCE;
     const hum = inside ? 0.85 : (0.08 + 0.3 * eased) / (1 + dist * 0.18);
     let prompt: string | null = null;
-    if (this.loaded && this.near(camera) && !this.wantOpen) prompt = inside ? "e to leave" : "e to go in";
+    if (this.loaded && this.near(camera) && !this.wantOpen) prompt = inside ? "leave" : "go in";
     return { prompt, inside: this.insideLevel, hum, closed };
   }
 }

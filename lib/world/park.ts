@@ -19,7 +19,9 @@ const PLAY_SOLIDS: [number, number, number, number][] = [
 ];
 
 type Placement = { kind: "bench" | "playground"; position: THREE.Vector3; ry: number };
-export type ParkPlan = { placements: Placement[]; colliders: Collider[] };
+/** Where you sit on a bench: the eye while seated, which way it faces, and where you stand up. */
+export type Seat = { eye: THREE.Vector3; facing: THREE.Vector3; stand: THREE.Vector3; ground: number };
+export type ParkPlan = { placements: Placement[]; colliders: Collider[]; seats: Seat[] };
 
 /** A model-space box turned by `ry` and moved to `position`, as a world axis-aligned box. */
 function box(position: THREE.Vector3, ry: number, x0: number, x1: number, z0: number, z1: number, extra: Partial<Collider> = {}): Collider {
@@ -52,6 +54,7 @@ export function planPark(
 ): ParkPlan {
   const placements: Placement[] = [];
   const colliders: Collider[] = [];
+  const seats: Seat[] = [];
 
   const bench = (x: number, z: number, faceX: number, faceZ: number) => {
     // Turn so the seat faces (faceX, faceZ); the model's own origin is off to the side, so centre it first
@@ -63,7 +66,21 @@ export function planPark(
     const position = new THREE.Vector3(x - (cx * c + cz * s), heightAt(x, z) - 0.04, z - (-cx * s + cz * c));
     placements.push({ kind: "bench", position, ry });
     // You can jump up and stand on the seat
-    colliders.push(box(position, ry, BENCH_SIZE.minX, BENCH_SIZE.maxX, BENCH_SIZE.minZ, BENCH_SIZE.maxZ, { top: position.y + BENCH_SIZE.seat, height: 1 }));
+    // Drawn in from the bench's outline: the body is a broad capsule, and against the full box it stopped you a
+    // good half metre short of the slats
+    const IN = 0.25;
+    colliders.push(
+      box(position, ry, BENCH_SIZE.minX + IN, BENCH_SIZE.maxX - IN, BENCH_SIZE.minZ + IN, BENCH_SIZE.maxZ - IN, { top: position.y + BENCH_SIZE.seat, height: 1 })
+    );
+    // Sitting in the middle, back against the slats, looking out the way the bench faces
+    const local = (lx: number, ly: number, lz: number) => new THREE.Vector3(position.x + lx * c + lz * s, position.y + ly, position.z - lx * s + lz * c);
+    const ground = heightAt(x, z);
+    seats.push({
+      eye: local(cx, BENCH_SIZE.seat + 0.78, -0.3),
+      facing: new THREE.Vector3(s, 0, c),
+      stand: local(cx, 0, 0.75).setY(ground),
+      ground,
+    });
   };
 
   // Beside a trail segment, `along` of the way, set back from the path and facing it
@@ -92,7 +109,7 @@ export function planPark(
   for (const [x0, x1, z0, z1] of PLAY_SOLIDS) colliders.push(box(position, 0, x0, x1, z0, z1, { height: 3 }));
   bench(center.x - 7.5, center.y + 1, 1, 0);
 
-  return { placements, colliders };
+  return { placements, colliders, seats };
 }
 
 /** Loads the two models once and places copies; everything gets a dusting of snow on top. */

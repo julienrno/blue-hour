@@ -3,6 +3,8 @@ import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import gsap from "gsap";
 import { BOUNDS, buildCity, type BuildingSet, type LightSource } from "./city";
 import { loadModels } from "./models";
+import { preloadAssets, releaseAssets } from "./preload";
+import { buildAntenna, type Antenna } from "./antenna";
 import { createSky, createSnowfall, OVERLAY_LAYER, SNOW_LIGHTS } from "./snow";
 import { createFogMaterial, FOG_LIGHTS, FOG_SETTINGS } from "./fog";
 import { createPost } from "./post";
@@ -14,12 +16,14 @@ import type { SoundCloudMusic } from "./soundcloud";
 import { groundHeight, POND, pondDistance, terrainHeight } from "./noise";
 import { LampShow } from "./lampShow";
 import { Footprints } from "./footprints";
-import { interiorUniforms } from "./interiors";
+import { interiorUniforms, knockOnRoom } from "./interiors";
 import { Snowballs } from "./snowballs";
 import { IPodViewModel } from "./ipod";
 import { ShopView, type Venue } from "./shop";
 import { StationView } from "./station";
-import { buildPark } from "./park";
+import { buildPark, type Seat } from "./park";
+import { CarAlarms } from "./alarms";
+import { Rooftop } from "./rooftop";
 
 const START = new THREE.Vector3(0, 1.68, 66);
 const SPOTS = 6;
@@ -33,13 +37,16 @@ const CULL_DISTANCE = 170;
 
 export type ExperienceEvents = {
   onLockChange?: (locked: boolean) => void;
-  onBuildingsChange?: (set: string) => void;
   /** 0-1 while a throw is being charged, -1 when released. */
   onCharge?: (level: number) => void;
-  /** A short instruction to show (e.g. "e to go in"), or null to hide it. */
+  /** What E does here (e.g. "go in"), shown under the crosshair beside an E key, or null to hide it. */
   onPrompt?: (text: string | null) => void;
+  /** Sound switched off or back on (m, or the control on screen). */
+  onMuteChange?: (muted: boolean) => void;
   /** The intro's mist is three-quarters clear: time for the map, the instructions, the player and the iPod. */
   onUiIn?: () => void;
+  /** Loading: 0-1 and a line about what is being built right now (1 once the city is ready to walk into). */
+  onLoad?: (progress: number, line: string) => void;
 };
 
 // How long the intro's mist takes to clear (s)
@@ -89,6 +96,22 @@ export class Experience {
   private venues: Venue[] = [];
   private venueInside = (p: THREE.Vector3) => this.venues.some((v) => v.isInside(p));
   private prompt: string | null = null;
+  private alarms!: CarAlarms;
+  private rooftop!: Rooftop;
+  /** The bench you are sitting on, and how far the settle into it has got (0-1). */
+  private seat: { seat: Seat; k: number; from: THREE.Vector3; fromQ: THREE.Quaternion; toQ: THREE.Quaternion } | null = null;
+  private rising: { from: THREE.Vector3; to: THREE.Vector3; k: number } | null = null;
+  private shake = new THREE.Vector3();
+  private quake = 0;
+  private antenna?: Antenna;
+  // 0..1 while dropping off something high: shakes the camera and streaks the picture for the whole fall
+  private falling = 0;
+  private rush = 0;
+  private streak = 0;
+  // The head roll laid on this frame (taken off again before anything moves the camera), and whether the fall has
+  // the field of view (so the intro's own zoom is left alone)
+  private roll = 0;
+  private widened = false;
 
   constructor(private canvas: HTMLCanvasElement, private events: ExperienceEvents = {}) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
@@ -136,10 +159,29 @@ export class Experience {
     this.ready = this.init();
   }
 
+  /**
+   * Tells the loading screen how far along we are, then lets the counter catch up before the next step (they block
+   * the page while they run, so the number would otherwise sit behind the line it belongs to).
+   */
+  private async stage(progress: number, line: string) {
+    this.events.onLoad?.(progress, line);
+    await new Promise((r) => setTimeout(r, 380));
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  }
+
   private async init() {
+    // Downloads are most of the wait; the rest is building, measuring and warming up the GPU
+    await preloadAssets((f, line) => this.events.onLoad?.(f * 0.72, line));
+    await this.stage(0.74, "laying the street and the snow on it");
     const models = await loadModels();
     this.scene.add(this.camera);
     this.city = buildCity(this.scene, models);
+    if (models.antenna) {
+      this.antenna = buildAntenna(models.antenna, groundHeight);
+      this.scene.add(this.antenna.group);
+      this.city.colliders.push(...this.antenna.colliders);
+      this.city.lights.push(...this.antenna.lights);
+    }
     this.lamps = this.city.lights.filter((l) => l.lamp);
     this.collectCullables();
 
@@ -151,21 +193,27 @@ export class Experience {
     this.scene.add(this.prints.mesh);
     this.snowballs = new Snowballs(
       () => this.player.colliders,
-      () => [this.city.groups[this.mode], ...this.city.carMeshes]
+      () => [this.city.groups[this.mode], ...this.city.carMeshes, ...(this.antenna ? [this.antenna.group] : [])]
     );
     this.snowballs.onStick = (mesh, point) => this.venues.forEach((v) => v.stick(mesh, point));
     this.snowballs.onSplat = (point, hard) => this.sound?.splatSound(point.distanceTo(this.camera.position), hard);
+    this.alarms = new CarAlarms(this.city.cars, () => this.city.carMeshes);
+    this.scene.add(this.alarms.group);
+    this.snowballs.onHit = (point, object) => this.onSnowballHit(point, object);
+    this.rooftop = new Rooftop();
+    this.rooftop.onRung = () => this.sound?.rung();
+    if (this.antenna) this.rooftop.addFixed(this.antenna.ladder);
+    this.scene.add(this.rooftop.group);
     this.scene.add(this.snowballs.group);
+    await this.stage(0.8, "furnishing the shop, the petrol station and the park");
     this.venues = [new ShopView(this.city.shop, groundHeight), new StationView(this.city.station, groundHeight)];
-    buildPark(this.city.park)
-      .then((g) => this.scene.add(g))
-      .catch(() => undefined);
-    for (const v of this.venues) {
-      this.scene.add(v.group);
-      v.load(this.renderer).catch(() => undefined);
-    }
+    for (const v of this.venues) this.scene.add(v.group);
     this.ipod.mount(this.canvas);
-    this.ipod.load().catch(() => undefined);
+    await Promise.allSettled([
+      buildPark(this.city.park).then((g) => this.scene.add(g)),
+      ...this.venues.map((v) => v.load(this.renderer)),
+      this.ipod.load(),
+    ]);
 
     this.lampShow = new LampShow(this.lamps, START);
     this.lampShow.onSwitch = (l) => {
@@ -183,15 +231,20 @@ export class Experience {
       this.events.onLockChange?.(false);
     });
 
-    const wanted = new URLSearchParams(window.location.search).get("buildings");
-    const sets = this.city.buildingSets;
-    this.setBuildings(sets.find((s) => s === wanted) ?? (sets.includes("building1") ? "building1" : "proc"), false);
+    await this.stage(0.88, "measuring every roof for a ladder");
+    // The panel-block model, or the generated blocks if it failed to load
+    this.setBuildings(this.city.buildingSets.includes("building1") ? "building1" : "proc");
+    releaseAssets();
     window.addEventListener("resize", this.onResize);
     window.addEventListener("keydown", this.onKey);
     document.addEventListener("visibilitychange", this.onVisibility);
     window.addEventListener("mousedown", this.onMouseDown);
     window.addEventListener("mouseup", this.onMouseUp);
     this.applyDebugView();
+    // Every material compiled before the first frame, so the walk does not stutter the first time you turn around
+    await this.stage(0.94, "teaching the fog how to hold the light");
+    await this.renderer.compileAsync(this.scene, this.camera).catch(() => undefined);
+    this.events.onLoad?.(1, "the lamps are coming on");
     this.loop();
   }
 
@@ -219,13 +272,15 @@ export class Experience {
 
   private cull() {
     const p = this.camera.position;
-    for (const c of this.cullables) c.obj.visible = p.distanceTo(c.center) - c.radius < CULL_DISTANCE;
+    // The fog thins with height: up on a roof or the mast you see much further, so things keep further away too
+    const reach = CULL_DISTANCE + Math.max(0, p.y - 12) * 4.5;
+    for (const c of this.cullables) c.obj.visible = p.distanceTo(c.center) - c.radius < reach;
   }
 
   /** Top-down data for the minimap: footprints of the visible buildings, the road and the park trail. */
   mapData() {
     if (!this.city) return null;
-    return { buildings: this.city.buildingColliders[this.mode], venues: [this.city.shop.bounds], station: this.city.station.map, trail: this.city.trail.map((p) => ({ x: p.x, z: p.y })), bounds: BOUNDS, pond: POND };
+    return { buildings: this.city.buildingColliders[this.mode], venues: [this.city.shop.bounds], station: this.city.station.map, antenna: this.antenna?.footprint, trail: this.city.trail.map((p) => ({ x: p.x, z: p.y })), bounds: BOUNDS, pond: POND };
   }
 
   /** Player position and heading (radians, 0 = facing -z). */
@@ -235,13 +290,16 @@ export class Experience {
     return { x: this.camera.position.x, z: this.camera.position.z, heading: Math.atan2(f.x, -f.z) };
   }
 
-  setBuildings(mode: BuildingSet, announce = true) {
+  private setBuildings(mode: BuildingSet) {
     this.mode = mode;
     for (const [set, group] of Object.entries(this.city.groups)) group.visible = set === mode;
-    this.player.colliders = [...this.city.colliders, ...this.city.buildingColliders[mode]];
+    // Every block with a fire ladder trades its solid box for a walkable roof and whatever stands up out of it
+    this.rooftop.place(this.city.groups[mode], this.city.buildingColliders[mode], groundHeight);
+    const swap = this.rooftop.colliders;
+    const blocks = this.city.buildingColliders[mode].filter((c) => !swap.remove.includes(c));
+    this.player.colliders = [...this.city.colliders, ...blocks, ...swap.add];
     this.others = this.city.lights.filter((l) => !l.lamp && (!l.set || l.set === mode));
     this.spots.forEach((s) => (s.shadow.needsUpdate = true));
-    if (announce) this.events.onBuildingsChange?.(mode);
   }
 
 
@@ -341,6 +399,7 @@ export class Experience {
     if (!this.sound) {
       this.sound = new Soundscape();
       await this.sound.begin(this.music);
+      if (this.muted) this.sound.setMuted(true);
     }
     this.lock();
   }
@@ -384,26 +443,174 @@ export class Experience {
   }
 
   private onKey = (e: KeyboardEvent) => {
-    if (e.code === "KeyM" && this.sound) this.sound.toggleMute();
-    if (e.code === "KeyN" && this.started) this.music?.skip(1);
-    if (e.code === "KeyE" && !e.repeat && this.walking && this.player.enabled) {
+    // Shortcuts follow the letter printed on the key, so they work on AZERTY and other layouts too (on a French
+    // keyboard M sits where QWERTY has the semicolon). Walking keeps the physical WASD position instead.
+    // Layouts without Latin letters fall back to the key's position
+    const typed = e.key.toLowerCase();
+    const letter = /^[a-z]$/.test(typed) ? typed : e.code.startsWith("Key") ? e.code.slice(3).toLowerCase() : "";
+    if (letter === "m" && !e.repeat) this.toggleMute();
+    if (letter === "n" && this.started) this.music?.skip(1);
+    if (letter === "e" && !e.repeat && this.walking && this.player.enabled) {
+      let handled = false;
       for (const v of this.venues) {
         const did = v.interact(this.camera.position);
         if (!did) continue;
+        handled = true;
         if (v.sliding) this.sound?.doorSlide();
         if (did === "open" && !v.isInside(this.camera.position)) this.sound?.doorChime();
         break;
       }
+      if (!handled) this.interact();
     }
     // Keyboard media keys, when the browser hands them to the page rather than to the media session
     if (e.key === "MediaTrackNext") this.music?.skip(1);
     if (e.key === "MediaTrackPrevious") this.music?.skip(-1);
     if (e.key === "MediaPlayPause") this.music?.toggle();
-    if (e.code === "KeyB") {
-      const sets = this.city.buildingSets;
-      this.setBuildings(sets[(sets.indexOf(this.mode) + 1) % sets.length]);
-    }
   };
+
+  private get feet() {
+    return new THREE.Vector3(this.camera.position.x, this.player.feetY, this.camera.position.z);
+  }
+
+  /** The nearest bench seat you could sit on from here. */
+  private benchNear() {
+    const f = this.feet;
+    // Only from in front of it, where your legs would go: never through the backrest
+    return (
+      this.city.park.seats.find(
+        (s) => Math.hypot(f.x - s.eye.x, f.z - s.eye.z) < 1.5 && (f.x - s.eye.x) * s.facing.x + (f.z - s.eye.z) * s.facing.z > 0.3 && f.y < s.ground + 0.6
+      ) ?? null
+    );
+  }
+
+  /** E's job when no door is in reach: the fire ladder, a bench, or getting up again. */
+  private localPrompt() {
+    if (this.rooftop.onLadder) return "@ladder";
+    if (this.rooftop.busy || this.rising) return null;
+    if (this.seat) return "stand up";
+    return this.rooftop.prompt(this.feet) ?? (this.benchNear() ? "sit" : null);
+  }
+
+  private interact() {
+    if (this.rooftop.busy || this.rising) return;
+    if (this.seat) return this.standUp();
+    if (this.rooftop.begin(this.feet, this.camera.position)) return;
+    const seat = this.benchNear();
+    if (!seat) return;
+    // Turn to face the way the bench looks, keeping a slight downward tilt, while sinking onto it
+    const toQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.06, Math.atan2(-seat.facing.x, -seat.facing.z), 0, "YXZ"));
+    this.seat = { seat, k: 0, from: this.camera.position.clone(), fromQ: this.camera.quaternion.clone(), toQ };
+  }
+
+  private updateSeat(dt: number) {
+    const s = this.seat!;
+    if (s.k < 1) {
+      s.k = Math.min(1, s.k + dt / 0.9);
+      const e = s.k * s.k * (3 - 2 * s.k);
+      this.camera.position.lerpVectors(s.from, s.seat.eye, e);
+      // The turn hands over to the mouse: only steered while settling in
+      this.camera.quaternion.slerpQuaternions(s.fromQ, s.toQ, e);
+    } else {
+      // Sitting still, breathing
+      this.camera.position.y = s.seat.eye.y + Math.sin(this.timer.getElapsed() * 0.9) * 0.004;
+      if (this.player.wantsToMove) this.standUp();
+    }
+  }
+
+  private standUp() {
+    const s = this.seat;
+    if (!s || this.rising) return;
+    this.seat = null;
+    this.rising = { from: this.camera.position.clone(), to: s.seat.stand.clone(), k: 0 };
+  }
+
+  /**
+   * Falling buffets the camera, more the faster you drop (so more from higher up), and a hard landing jolts it,
+   * settling over a second or so. Smooth noise, not random jitter, so it reads as wind and impact.
+   */
+  private shakeCamera(dt: number, t: number) {
+    const p = this.player;
+    if (p.impact > 0) {
+      this.quake = Math.max(this.quake, THREE.MathUtils.clamp((p.impact - 3) / 12, 0, 1));
+      p.impact = 0;
+    }
+    this.quake *= Math.exp(-dt * 3.5);
+    // The buffeting starts the moment the ground falls away (a real drop, not a hop), grows with the speed and holds
+    // right down to the impact
+    const target = p.airborne ? Math.max(THREE.MathUtils.smoothstep(p.drop, 1.6, 5), THREE.MathUtils.smoothstep(p.fallSpeed, 4, 9)) : 0;
+    this.falling += (target - this.falling) * (1 - Math.exp(-dt * (target > this.falling ? 9 : 3)));
+    // How hard the air is tearing past: drives the shake, the roll, the widening view, the vignette and the roar
+    // (Builds quickly, and lets go over most of a second after you land, so touching down is not a hard cut)
+    const rush = this.falling * THREE.MathUtils.smoothstep(p.fallSpeed, 2, 14);
+    this.rush += (rush - this.rush) * (1 - Math.exp(-dt * (rush > this.rush ? 6 : 1.6)));
+    const amp = this.falling * 0.014 + this.rush * 0.07 + this.quake * 0.12;
+    // Faster and faster buffeting as you speed up, and the head rolling with it
+    const quick = 1 + this.rush * 0.8;
+    const n = (f: number, o: number) => Math.sin(t * f * quick + o) * 0.6 + Math.sin(t * f * quick * 1.73 + o * 2.1) * 0.4;
+    this.shake.set(n(23, 0) * amp, n(29, 1.3) * amp * 0.7, n(19, 2.7) * amp);
+    this.camera.position.add(this.shake);
+    this.roll = (this.rush * 0.045 + this.quake * 0.03) * n(7, 4.2);
+    if (this.roll !== 0) this.camera.rotateZ(this.roll);
+  }
+
+  /** The drop pulls the world away from you: the view widens as you pick up speed and snaps back on landing. */
+  private fallView(dt: number) {
+    const target = 60 + this.rush * 16;
+    if (target > 60.01) this.widened = true;
+    if (!this.widened) return;
+    const fov = this.camera.fov + (target - this.camera.fov) * (1 - Math.exp(-dt * 2.5));
+    if (target <= 60.01 && Math.abs(fov - 60) < 0.02) {
+      this.widened = false;
+      this.camera.fov = 60;
+    } else this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * How high above the street you are, 0..1 (a roof is about half, the mast's platform all of it): the fog thickens
+   * and climbs with you, and the lens bends.
+   */
+  private updateAltitude(dt: number) {
+    const p = this.camera.position;
+    const target = THREE.MathUtils.smoothstep(p.y - groundHeight(p.x, p.z), 8, 64);
+    this.altitude += (target - this.altitude) * (1 - Math.exp(-dt * 2));
+    this.fogMat.uniforms.uAltitude.value = this.altitude;
+    this.post.grade.uniforms.uLens.value = this.altitude;
+    this.post.grade.uniforms.uAspect.value = this.camera.aspect;
+  }
+  private altitude = 0;
+
+  /** Getting up: lean forward over your knees, then rise and step clear of the bench. */
+  private updateRising(dt: number) {
+    const r = this.rising!;
+    r.k = Math.min(1, r.k + dt / 0.85);
+    const e = r.k * r.k * (3 - 2 * r.k);
+    const end = r.to.clone().setY(r.to.y + 1.68);
+    this.camera.position.lerpVectors(r.from, end, e);
+    // Rising is slower than moving forward at first: the weight goes over the feet before the legs straighten
+    this.camera.position.y = THREE.MathUtils.lerp(r.from.y, end.y, THREE.MathUtils.smoothstep(r.k, 0.25, 1)) - Math.sin(r.k * Math.PI) * 0.06;
+    if (r.k >= 1) {
+      this.rising = null;
+      this.player.place(r.to.x, r.to.y, r.to.z);
+    }
+  }
+
+  /** A snowball landed: on a parked car its alarm goes off; on a building, someone in that room reacts. */
+  private onSnowballHit(point: THREE.Vector3, object?: THREE.Object3D) {
+    const car = this.alarms.carAt(point);
+    if (car) {
+      if (this.alarms.trigger(car, this.timer.getElapsed())) {
+        const toCar = new THREE.Vector3(car.x, 0.8, car.z).sub(this.camera.position);
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+        const pan = right.dot(toCar.clone().normalize()) * 0.8;
+        this.sound?.carAlarm(toCar.length(), pan);
+      }
+      return;
+    }
+    let o: THREE.Object3D | null = object ?? null;
+    while (o && o !== this.city.groups[this.mode]) o = o.parent;
+    if (o) knockOnRoom(point);
+  }
 
   private nearest(list: LightSource[], n: number) {
     const p = this.camera.position;
@@ -444,7 +651,7 @@ export class Experience {
     if (spots[0]) this.ipod.setLight(light, spots[0].l.color);
     const snowU = this.snow.uniforms.uLights.value;
     this.ranked(this.lamps, SNOW_LIGHTS).forEach(({ l, w }, i) => snowU[i].set(l.position.x, l.position.y, l.position.z, w));
-    const fog = [...this.ranked(this.lamps, 9), ...this.ranked(this.others, FOG_LIGHTS - 9)];
+    const fog = [...this.ranked(this.lamps, 9), ...this.ranked([...this.others, ...this.alarms.lights], FOG_LIGHTS - 9)];
     const fp = this.fogMat.uniforms.uLightPos.value;
     const fc = this.fogMat.uniforms.uLightCol.value;
     fog.forEach(({ l, w }, i) => {
@@ -486,7 +693,12 @@ export class Experience {
     // A fixed exposure, not a fixed fraction of a frame: the streaks stay as long as the low-battery 30 fps look
     // (which felt right) when the frame rate climbs back up, instead of shrinking with every extra frame
     this.frameTime += (Math.max(dt, 1 / 120) - this.frameTime) * 0.1;
-    cu.uShutter.value = EXPOSURE / this.frameTime;
+    // Falling: longer streaks and the world rushing up past the edges of the frame
+    cu.uShutter.value = (EXPOSURE / this.frameTime) * (1 + 1.2 * this.falling + 0.8 * this.rush);
+    // The upward streak eases off after touchdown instead of vanishing on the frame you land
+    const streak = this.falling * Math.min(1, 0.35 + this.player.fallSpeed / 10);
+    this.streak = Math.max(streak, this.streak * Math.exp(-dt * 2.5));
+    cu.uFall.value = this.streak;
 
     this.post.composer.render(dt);
     this.ipod.render();
@@ -504,10 +716,28 @@ export class Experience {
     this.timer.update();
     const dt = Math.min(this.timer.getDelta(), 0.05);
     const t = this.timer.getElapsed();
+    // The shake is laid on top of the camera each frame: take last frame's off before anything moves it
+    this.camera.position.sub(this.shake);
+    this.shake.set(0, 0, 0);
+    if (this.roll !== 0) this.camera.rotateZ(-this.roll);
+    this.roll = 0;
     if (this.walking) {
-      this.player.update(dt, t);
+      const climb = this.rooftop.update(dt, this.player.enabled ? this.player.climbInput : 0, this.player.shiftHeld);
+      if (climb) {
+        this.camera.position.copy(climb.eye);
+        if (climb.done) this.player.place(climb.done.x, climb.done.y, climb.done.z);
+      } else if (this.seat) this.updateSeat(dt);
+      else if (this.rising) this.updateRising(dt);
+      else {
+        this.player.update(dt, t);
+        this.shakeCamera(dt, t);
+      }
+      this.fallView(dt);
+      this.sound?.fallWind(this.rush);
+      this.post.grade.uniforms.uRush.value = this.rush;
       this.player.jumped = false;
     }
+    this.alarms.update(t);
     this.camera.updateMatrixWorld();
     if (this.frame % 10 === 0) this.cull();
     this.lampShow.update(t);
@@ -534,9 +764,9 @@ export class Experience {
       this.post.bloom.strength = 0.9 * (1 - 0.45 * look);
       // The tubes still glow; the white tiles and walls must not haze over the whole room
       this.post.bloom.threshold = 0.7 + 1.3 * look;
-      this.post.cinematic.uniforms.uAperture.value = 5.0 * pr * (1 - 0.4 * look);
+      this.post.cinematic.uniforms.uAperture.value = 5.0 * pr * (1 - 0.4 * look) * (1 + 0.5 * this.falling);
       this.sound?.shopHum(s.hum);
-      const prompt = this.walking ? s.prompt : null;
+      const prompt = this.walking ? s.prompt ?? this.localPrompt() : null;
       if (prompt !== this.prompt) {
         this.prompt = prompt;
         this.events.onPrompt?.(prompt);
@@ -549,6 +779,7 @@ export class Experience {
     this.updateWeather(dt, t);
     this.snow.uniforms.uCenter.value.copy(this.camera.position);
     this.fogMat.uniforms.uTime.value = t;
+    this.updateAltitude(dt);
     this.post.grade.uniforms.uTime.value = t;
     if (this.post.mist.enabled) this.post.mist.uniforms.uTime.value = t;
     this.render(dt);
@@ -608,6 +839,15 @@ export class Experience {
     this.ipod.resize();
     this.allocateTargets();
   };
+
+  /** Mutes or unmutes everything; remembered if the sound hasn't started yet. */
+  muted = false;
+  toggleMute() {
+    this.muted = !this.muted;
+    this.sound?.setMuted(this.muted);
+    if (!this.sound) this.music?.setVolume(this.muted ? 0 : 0.54);
+    this.events.onMuteChange?.(this.muted);
+  }
 
   /** Away from the tab, everything goes quiet (wind, the shop's hum, the music) and picks up again on return. */
   private musicWasPlaying = false;

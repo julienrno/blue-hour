@@ -6,12 +6,10 @@ const FILES = {
   car: "/models/opt/car-2.glb",
   lamp: "/models/opt/streetlamp.glb",
   building1: "/models/opt/building-1.glb",
-  building2: "/models/opt/building-2.glb",
-  building3: "/models/opt/building-3.glb",
-  building4: "/models/opt/building-4.glb",
+  antenna: "/models/opt/antenna.glb",
 } as const;
 
-export const BUILDING_MODELS = ["building1", "building2", "building3", "building4"] as const;
+export const BUILDING_MODELS = ["building1"] as const;
 export type BuildingModel = (typeof BUILDING_MODELS)[number];
 
 export type ModelName = keyof typeof FILES;

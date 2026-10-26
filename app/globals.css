@@ -48,6 +48,10 @@ body {
   user-select: none;
 }
 
+.veil.is-waiting {
+  cursor: default;
+}
+
 .veil h1 {
   font-weight: 400;
   font-size: clamp(1.9rem, 4.2vw, 3.2rem);
@@ -57,11 +61,28 @@ body {
 .veil h1 span {
   display: inline-block;
   white-space: pre;
+  /* Hidden until the intro animates them in (so they never flash up as the loader leaves) */
+  opacity: 0;
 }
 
 .veil p {
+  opacity: 0;
   font-style: italic;
   font-size: 1.15rem;
+}
+
+/* "click to wander" framed like a button so it reads as the way in; the whole veil still takes the click */
+.veil .enter {
+  padding: 0.5em 1.4em 0.6em;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  box-shadow: 0 0 0 0 rgba(243, 213, 72, 0);
+  transition: background-color 0.35s ease, box-shadow 0.35s ease, color 0.35s ease;
+}
+
+.veil:not(.is-waiting):hover .enter {
+  background-color: rgba(243, 213, 72, 0.12);
+  box-shadow: 0 0 24px 2px rgba(243, 213, 72, 0.22);
 }
 
 .veil small {
@@ -72,23 +93,111 @@ body {
   padding: 0 16px;
 }
 
+/* Loading: a counter and one line about what is being built, in the subtitle yellow like everything else */
+.loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0 16px;
+}
+
+.loader-pct {
+  font-size: clamp(2.4rem, 6vw, 4rem);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.loader-line {
+  font-style: italic;
+  font-size: 1.05rem;
+  opacity: 0.8;
+}
+
 /* Bottom centre, where a subtitle would sit, between the map and the iPod */
 .hud {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 22px;
+  z-index: 6;
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 1.6em;
   font-size: 1.05rem;
   opacity: 0.92;
   pointer-events: none;
+  /* Keycap and icon outlines get the same dark edge as the letters */
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6));
   animation: minimap-in 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) both;
 }
 
-.hud span + span::before {
-  content: "·";
-  margin: 0 0.6em;
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+}
+
+.keys {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.18em;
+}
+
+.keys .row {
+  display: inline-flex;
+  gap: 0.18em;
+}
+
+/* A keyboard key: outlined, with a thicker bottom edge so it reads as a cap you press */
+.hud kbd,
+.prompt kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6em;
+  height: 1.6em;
+  padding: 0 0.35em;
+  font: inherit;
+  font-size: 0.86em;
+  line-height: 1;
+  border: 1.5px solid currentColor;
+  border-bottom-width: 3.5px;
+  border-radius: 0.45em;
+  font-style: normal;
+}
+
+/* Lowercase words have no tall letters: lifted a touch so they sit in the middle of the cap */
+.hud kbd.word {
+  padding: 0 0.45em 0.16em;
+}
+
+.hud .icon {
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The one clickable hint: above the pause veil, so it works while paused too */
+.sound-toggle {
+  font: inherit;
+  color: inherit;
+  text-shadow: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.sound-toggle:hover {
+  opacity: 0.8;
 }
 
 .crosshair {
@@ -111,10 +220,14 @@ body {
   left: 0;
   right: 0;
   top: calc(50% + 46px);
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.45em;
   font-style: italic;
   font-size: 1.35rem;
   pointer-events: none;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6));
   animation: prompt-in 0.35s ease-out both;
 }
 
@@ -123,18 +236,6 @@ body {
     opacity: 0;
     transform: translateY(4px);
   }
-}
-
-.toast {
-  position: fixed;
-  top: 24px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: 1.15rem;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
 }
 
 .minimap {

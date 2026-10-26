@@ -9,13 +9,45 @@ const ROOM_SCALE = { w: 2.0, h: 1.7, sill: 0.3, depth: 2.4 };
 
 // Ray-traces a box room behind a window. local: entry point on the room's front face (0-1), pane: position on the
 // glass itself (for curtains), size: room width/height/depth, d: view ray, N: facade normal, r: per-room random.
-/** Shared clock for the rooms, so lights can go on and off over time. */
-export const interiorUniforms = { uRoomTime: { value: 0 } };
+// A snowball against a dark window: half a second later someone switches the light on to look, and a few seconds
+// after that it goes off again. Rooms already lit just stay lit
+const FLASHES = 4;
+const FLASH_DELAY = 0.6;
+const FLASH_HOLD = 5.5;
+
+/** Shared clock for the rooms, plus the last few snowball hits on facades (xyz, time of the hit). */
+export const interiorUniforms = {
+  uRoomTime: { value: 0 },
+  uFlash: { value: Array.from({ length: FLASHES }, () => new THREE.Vector4(0, -1e4, 0, -1e4)) },
+};
+let nextFlash = 0;
+
+/** A snowball hit a building here: whichever room's window (or wall) it struck answers. */
+export function knockOnRoom(point: THREE.Vector3) {
+  interiorUniforms.uFlash.value[nextFlash].set(point.x, point.y, point.z, interiorUniforms.uRoomTime.value);
+  nextFlash = (nextFlash + 1) % FLASHES;
+}
 
 const ROOM = /* glsl */ `
   uniform float uLitRatio;
   uniform float uRoomTime;
   uniform float uInteriorGain;
+  uniform vec4 uFlash[${FLASHES}];
+  // Set just before shadeRoom: 1 while someone in this room has switched the light on after a snowball
+  float gRoomFlip = 0.0;
+  // 1 on a window pane: the moon must not glint off it as a tiny hard sun (see GLASS_GLINT)
+  float gGlass = 0.0;
+  float roomKnocked(vec3 centre, vec3 N, vec2 halfSize) {
+    vec3 T = cross(vec3(0.0, 1.0, 0.0), N);
+    for (int i = 0; i < ${FLASHES}; i++) {
+      vec4 f = uFlash[i];
+      float age = uRoomTime - f.w;
+      if (age < ${FLASH_DELAY.toFixed(2)} || age > ${(FLASH_DELAY + FLASH_HOLD).toFixed(2)}) continue;
+      vec3 d = f.xyz - centre;
+      if (abs(dot(d, T)) < halfSize.x && abs(d.y) < halfSize.y && abs(dot(d, N)) < 2.2) return 1.0;
+    }
+    return 0.0;
+  }
   vec3 roomHash(vec3 p) {
     return fract(sin(vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6)))) * 43758.5453);
   }
@@ -31,6 +63,7 @@ const ROOM = /* glsl */ `
     // r.x > 1.5 marks a sealed room (low floor or corner): fully dark, not even a TV
     bool lit = r.x < uLitRatio;
     bool sealed = r.x > 1.5;
+    if (gRoomFlip > 0.5) lit = true;
     // Rooms keep their light: a window snapping on or off as you walk past read as a glitch, not as life
 
     vec3 wall = mix(vec3(0.78, 0.7, 0.56), vec3(0.58, 0.64, 0.56), r.y);
@@ -80,10 +113,20 @@ const ROOM = /* glsl */ `
 `;
 
 const GLASS = /* glsl */ `
+  gGlass = 1.0;
   diffuseColor.rgb = vec3(0.01);
   roughnessFactor = 0.08;
   metalnessFactor = 0.0;
 `;
+
+/**
+ * No sun-like glints on the panes: at 0.08 roughness the moon (the only light above you) comes back off the glass as a
+ * blinding spot whenever you look up a facade from a ladder. The panes keep their sky sheen from shadeRoom instead.
+ */
+const GLASS_GLINT = [
+  "#include <lights_fragment_end>",
+  "#include <lights_fragment_end>\nreflectedLight.directSpecular *= 1.0 - gGlass;",
+] as const;
 
 function extend<T extends THREE.MeshStandardMaterial>(mat: T, key: string, patch: (shader: THREE.WebGLProgramParametersWithUniforms) => void): T {
   const prev = mat.onBeforeCompile;
@@ -109,6 +152,7 @@ export function interiorize<T extends THREE.MeshStandardMaterial>(mat: T, opts: 
   return extend(mat, "interior", (shader) => {
     shader.uniforms.uLitRatio = { value: opts.litRatio };
     shader.uniforms.uRoomTime = interiorUniforms.uRoomTime;
+    shader.uniforms.uFlash = interiorUniforms.uFlash;
     shader.uniforms.uInteriorGain = { value: opts.gain ?? 1.25 };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying float vFaceU;")
@@ -142,11 +186,13 @@ export function interiorize<T extends THREE.MeshStandardMaterial>(mat: T, opts: 
           // Rooms at the building's corners stay dark: a lit one next to the side windows would give the trick away
           if (min(vFaceU, 1.0 - vFaceU) * ${opts.faceWidth.toFixed(2)} < ${(CELL.w * 1.2).toFixed(2)}) rr.x = 1.0;
           if (key.y < ${LOW_ROOMS_BELOW.toFixed(1)}) rr.x = 2.0;
+          vec3 cellCentre = vSnowPos + T * (0.5 - local.x) * ${CELL.w.toFixed(1)} + vec3(0.0, (0.5 - local.y) * ${CELL.h.toFixed(1)}, 0.0);
+          gRoomFlip = roomKnocked(cellCentre, N, vec2(${(CELL.w / 2).toFixed(2)}, ${(CELL.h / 2).toFixed(2)}));
           totalEmissiveRadiance = shadeRoom(local, wl, vec3(${CELL.w.toFixed(1)}, ${CELL.h.toFixed(1)}, ${depth}), normalize(vSnowPos - cameraPosition), N, rr);
           ${GLASS}
         }
       }`
-    );
+    ).replace(...GLASS_GLINT);
   });
 }
 
@@ -158,6 +204,7 @@ export function modelInteriors<T extends THREE.MeshStandardMaterial>(mat: T, opt
   return extend(mat, "model-interior", (shader) => {
     shader.uniforms.uLitRatio = { value: opts.litRatio };
     shader.uniforms.uRoomTime = interiorUniforms.uRoomTime;
+    shader.uniforms.uFlash = interiorUniforms.uFlash;
     shader.uniforms.uInteriorGain = { value: opts.gain ?? 1.25 };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nattribute vec4 aWin;\nattribute vec3 aWinSize;\nvarying vec4 vWin;\nvarying vec3 vWinSize;\nvarying float vWinSeed;")
@@ -185,10 +232,15 @@ export function modelInteriors<T extends THREE.MeshStandardMaterial>(mat: T, opt
           // Corner windows (flagged with w = 2) stay dark so neighbouring faces never show the same room from two sides
           if (vWin.w > 1.5) rr.x = 1.0;
           if (vSnowPos.y - local.y * vWinSize.y < ${LOW_ROOMS_BELOW.toFixed(1)}) rr.x = 2.0;
-          totalEmissiveRadiance = shadeRoom(local, pane, vWinSize, normalize(vSnowPos - cameraPosition), facadeNormal(vNormal), rr);
+          vec3 Nw = facadeNormal(vNormal);
+          vec3 Tw = cross(vec3(0.0, 1.0, 0.0), Nw);
+          vec3 roomCentre = vSnowPos + Tw * (0.5 - local.x) * vWinSize.x + vec3(0.0, (0.5 - vWin.y) * vWinSize.y, 0.0);
+          gRoomFlip = roomKnocked(roomCentre, Nw, vec2(vWinSize.x * 0.45, vWinSize.y * 0.5));
+          totalEmissiveRadiance = shadeRoom(local, pane, vWinSize, normalize(vSnowPos - cameraPosition), Nw, rr);
           ${GLASS}
         }`
-      );
+      )
+      .replace(...GLASS_GLINT);
   });
 }
 
@@ -233,17 +285,27 @@ export function tagWindows(source: THREE.BufferGeometry, seed: number) {
     planeArea[d].set(key, (planeArea[d].get(key) ?? 0) + area);
   }
 
-  // The facade is the largest plane facing each way; panes sit 0.1%-1.5% of the building's length behind it
-  const facade = planeArea.map((m) => {
-    let best = -Infinity;
+  // Facades are the big planes facing each way: the main wall, and the fronts of bays and loggia stacks that stand
+  // out from it (each at least a tenth of the main wall's area). Panes sit 0.1%-1.5% of the building's length behind
+  // the facade plane just in front of them
+  const facades = planeArea.map((m) => {
     let bestArea = 0;
-    for (const [k, v] of m) if (v > bestArea) [best, bestArea] = [k * q, v];
-    return best;
+    for (const v of m.values()) bestArea = Math.max(bestArea, v);
+    return [...m].filter(([, v]) => v >= bestArea * 0.1).map(([k]) => k * q);
   });
+  const recessOf = (d: number, plane: number) => {
+    let best = Infinity;
+    for (const f of facades[d]) {
+      const r = f - plane;
+      if (r > long * 0.0002 && r < best) best = r;
+    }
+    return best;
+  };
+  const facadeOf = (d: number, plane: number) => plane + recessOf(d, plane);
   const isPane = (t: number) => {
     const d = triDir[t];
     if (d < 0) return false;
-    const recess = facade[d] - triPlane[t];
+    const recess = recessOf(d, triPlane[t]);
     return recess > long * 0.001 && recess < long * 0.015;
   };
 
@@ -334,14 +396,14 @@ export function tagWindows(source: THREE.BufferGeometry, seed: number) {
     s = (s * 16807) % 2147483647;
     // Just behind the wall surface: the quad covers every leftover sash and frame piece set deeper in the opening
     const dir = dirOf.get(root)!;
-    windows.push({ dir, box, plane: Math.max(sum / cnt, facade[dir] - long * 0.0008), rand: s / 2147483647 });
+    windows.push({ dir, box, plane: Math.max(sum / cnt, facadeOf(dir, sum / cnt) - long * 0.0008), rand: s / 2147483647 });
   }
 
   const eps = long * 0.0005;
   const inWindow = (t: number) => {
     const d = triDir[t];
     if (d < 0) return false;
-    const recess = facade[d] - triPlane[t];
+    const recess = recessOf(d, triPlane[t]);
     if (recess < eps || recess > long * 0.02) return false;
     const T = tangent(d);
     let minU = Infinity, maxU = -Infinity, minY = Infinity, maxY = -Infinity;

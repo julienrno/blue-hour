@@ -69,6 +69,7 @@ export const CinematicShader = {
     uAperture: { value: 3.0 },
     uMaxCoc: { value: 7.0 },
     uShutter: { value: 0.72 },
+    uFall: { value: 0 },
   },
   vertexShader: "varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
   fragmentShader: /* glsl */ `
@@ -82,6 +83,7 @@ export const CinematicShader = {
     uniform float uAperture;
     uniform float uMaxCoc;
     uniform float uShutter;
+    uniform float uFall;
     varying vec2 vUv;
 
 
@@ -102,6 +104,9 @@ export const CinematicShader = {
       vec2 vel = (vUv - prevUv) * uShutter;
       float vl = length(vel);
       if (vl > 0.065) vel *= 0.065 / vl;
+      // Dropping off a roof: everything streaks upward past you, hardest at the edges of the frame
+      vec2 fromCentre = (vUv - 0.5) * vec2(uTexel.y / uTexel.x, 1.0);
+      vel.y += uFall * 0.028 * (0.25 + smoothstep(0.1, 0.7, length(fromCentre)));
 
       float focus = texture2D(tFocus, vec2(0.5)).r;
       float defocus = 1.0 - focus / max(z, 0.05);
@@ -110,7 +115,6 @@ export const CinematicShader = {
       // the parked cars just ahead stay close to sharp
       float coc = (defocus > 0.0 ? defocus : -defocus * 0.25) * uAperture;
       // Side vision: the edges of the frame always a little softer than where you look
-      vec2 fromCentre = (vUv - 0.5) * vec2(uTexel.y / uTexel.x, 1.0);
       coc += smoothstep(0.25, 0.75, length(fromCentre)) * uAperture * 0.9;
       coc = min(coc, uMaxCoc);
 

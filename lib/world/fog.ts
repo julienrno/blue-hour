@@ -34,6 +34,8 @@ export function createFogMaterial() {
       uLightPos: { value: Array.from({ length: FOG_LIGHTS }, () => new THREE.Vector4(0, -999, 0, 0)) },
       uLightCol: { value: Array.from({ length: FOG_LIGHTS }, () => new THREE.Vector4(0, 0, 0, 0)) },
       uFrame: { value: 0 },
+      // 0 at street level, 1 up on the mast: thicker fog, reaching higher, so the edges of the world stay hidden
+      uAltitude: { value: 0 },
       uShop: shopUniforms.uShop,
       uShopTop: shopUniforms.uShopTop,
       uShop2: stationUniforms.uShop,
@@ -56,6 +58,7 @@ export function createFogMaterial() {
       uniform vec4 uLightPos[${FOG_LIGHTS}];
       uniform vec4 uLightCol[${FOG_LIGHTS}];
       uniform float uFrame;
+      uniform float uAltitude;
       uniform vec4 uShop;
       uniform float uShopTop;
       uniform vec4 uShop2;
@@ -70,7 +73,7 @@ export function createFogMaterial() {
         // No weather inside the shop
         if ((p.x > uShop.x && p.x < uShop.z && p.z > uShop.y && p.z < uShop.w && p.y < uShopTop) ||
             (p.x > uShop2.x && p.x < uShop2.z && p.z > uShop2.y && p.z < uShop2.w && p.y < uShop2Top)) return 0.0;
-        float h = exp(-max(p.y, 0.0) * uFalloff);
+        float h = exp(-max(p.y, 0.0) * uFalloff * (1.0 - 0.3 * uAltitude)) * (1.0 + 0.35 * uAltitude);
         vec3 q = p * 0.045 + uWind * uTime * 0.02;
         float n = noise3(q) * 0.65 + noise3(q * 2.7 + 4.0) * 0.35;
         // Close to the camera the fog stays even: drifting clumps there read as moving shadows on walls and snow
@@ -122,7 +125,7 @@ export function createFogMaterial() {
           T *= a;
         }
         if (dist > march) {
-          float far = uDensity * 0.85 * exp(-max(uCamPos.y + rd.y * 40.0, 0.0) * uFalloff);
+          float far = uDensity * 0.85 * (1.0 + 0.35 * uAltitude) * exp(-max(uCamPos.y + rd.y * 40.0, 0.0) * uFalloff * (1.0 - 0.3 * uAltitude));
           float a = exp(-far * (dist - march));
           scatter += T * uAmbient * (1.0 - a);
           T *= a;

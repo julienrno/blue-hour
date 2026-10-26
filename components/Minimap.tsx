@@ -56,6 +56,17 @@ function drawLayer(data: MapData) {
   for (const b of st.islands) ctx.fillRect(...rect(b));
   ctx.fillRect(...rect(st.shop));
 
+  // The radio mast: its platform, with the red of its lights at the centre
+  if (data.antenna) {
+    const a = data.antenna;
+    ctx.fillStyle = "#3a414c";
+    ctx.fillRect(...rect(a));
+    ctx.fillStyle = "#e0402e";
+    ctx.beginPath();
+    ctx.arc(X((a.minX + a.maxX) / 2), Z((a.minZ + a.maxZ) / 2), 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   // The shop: the places worth walking to
   for (const b of data.venues) ctx.fillRect(...rect(b));
 
