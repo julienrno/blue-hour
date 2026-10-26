@@ -34,6 +34,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#0b1530",
+  // Fill the whole screen on notched phones; the controls keep clear of the notch and home bar themselves
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

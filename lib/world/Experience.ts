@@ -58,6 +58,13 @@ const EXPOSURE = 0.03;
 // How long after Esc the browser refuses to capture the mouse again (ms)
 const RELOCK_DELAY = 1100;
 
+/** 60° vertical on a landscape screen; on a tall one, wide enough to keep a landscape's view across (up to 90°). */
+function viewFov(aspect: number) {
+  if (aspect >= 1.2) return 60;
+  const across = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(30)) * 1.2);
+  return Math.min(90, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(across / 2) / aspect)));
+}
+
 export class Experience {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
@@ -107,10 +114,14 @@ export class Experience {
   private rising: { from: THREE.Vector3; to: THREE.Vector3; k: number } | null = null;
   private shake = new THREE.Vector3();
   private quake = 0;
+  /** A phone or tablet: no mouse to capture, the walk is driven by the on-screen stick and buttons instead. */
+  readonly touch = typeof window !== "undefined" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
   private antenna?: Antenna;
   // 0..1 while dropping off something high: shakes the camera and streaks the picture for the whole fall
   private falling = 0;
   private rush = 0;
+  // The resting field of view: 60° vertical, widened on a portrait screen so it shows as much of the street across
+  private baseFov = typeof window !== "undefined" ? viewFov(window.innerWidth / window.innerHeight) : 60;
   private streak = 0;
   // The head roll laid on this frame (taken off again before anything moves the camera), and whether the fall has
   // the field of view (so the intro's own zoom is left alone)
@@ -119,6 +130,7 @@ export class Experience {
 
   constructor(private canvas: HTMLCanvasElement, private events: ExperienceEvents = {}) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
+    // Phones and tablets have dense screens and small GPUs: render at the same density as a laptop, no more
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -212,11 +224,12 @@ export class Experience {
     await this.stage(0.8, "furnishing the shop, the petrol station and the park");
     this.venues = [new ShopView(this.city.shop, groundHeight), new StationView(this.city.station, groundHeight)];
     for (const v of this.venues) this.scene.add(v.group);
-    this.ipod.mount(this.canvas);
+    // No iPod on touch screens: its corner is where the thumbs go
+    if (!this.touch) this.ipod.mount(this.canvas);
     await Promise.allSettled([
       buildPark(this.city.park).then((g) => this.scene.add(g)),
       ...this.venues.map((v) => v.load(this.renderer)),
-      this.ipod.load(),
+      ...(this.touch ? [] : [this.ipod.load()]),
     ]);
 
     this.lampShow = new LampShow(this.lamps, START);
@@ -389,7 +402,7 @@ export class Experience {
         .to(g.uFade, { value: 1, duration: 0.6, ease: "sine.out" }, 0)
         .to(mist.uMist, { value: 0, duration: INTRO_MIST, ease: "power2.inOut", onComplete: () => void (this.post.mist.enabled = false) }, 0)
         .to(this.fogMat.uniforms.uDensity, { value: FOG_SETTINGS.density, duration: 5.5, ease: "power2.out" }, 0)
-        .to(fov, { v: 60, duration: 3.6, ease: "power2.inOut", onUpdate: apply }, 0)
+        .to(fov, { v: this.baseFov, duration: 3.6, ease: "power2.inOut", onUpdate: apply }, 0)
         .call(() => (this.walking = true), [], 1.4)
         // Everything on screen arrives together, on the intro's own clock (not on pointer lock or the music loading,
         // which made it land at a different moment every time)
@@ -407,7 +420,41 @@ export class Experience {
       await this.sound.begin(this.music);
       if (this.muted) this.sound.setMuted(true);
     }
-    this.lock();
+    if (this.touch) this.resume();
+    else this.lock();
+  }
+
+  /** Touch screens: walking again straight away (there is no mouse to capture). */
+  private resume() {
+    this.player.enabled = true;
+    this.sound?.duck(false);
+    this.events.onLockChange?.(true);
+  }
+
+  /** The pause button on touch screens (Esc does it on a computer). */
+  pause() {
+    if (!this.player.enabled) return;
+    this.softPause();
+  }
+
+  /** What the on-screen stick, look drag and buttons drive on a touch screen. */
+  setStick(x: number, y: number) {
+    this.player.stick.set(x, y);
+  }
+  setLookStick(x: number, y: number) {
+    this.player.lookStick.set(x, y);
+  }
+  look(dx: number, dy: number) {
+    this.player.look(dx, dy);
+  }
+  jump() {
+    this.player.jump();
+  }
+  throwStart() {
+    this.beginCharge();
+  }
+  throwEnd() {
+    this.releaseThrow();
   }
 
   /**
@@ -457,11 +504,18 @@ export class Experience {
 
   /** Press to pick up a snowball; the longer you hold, the harder and further it flies when you let go. */
   /** No snowballs indoors. */
+  /** Whether the walk is taking input: the mouse captured, or on a touch screen simply not paused. */
+  private get inputLive() {
+    return this.player.controls.isLocked || (this.touch && this.player.enabled);
+  }
+
   private get canThrow() {
     return !this.venueInside(this.camera.position);
   }
 
   private onMouseDown = (e: MouseEvent) => {
+    // (Taps on a touch screen arrive as mouse events too; the on-screen buttons handle those)
+    if (this.touch) return;
     // Resumed but the mouse isn't captured yet: this click captures it
     if (this.walking && this.player.enabled && !this.player.controls.isLocked) {
       this.requestLock();
@@ -471,6 +525,7 @@ export class Experience {
   };
 
   private onMouseUp = (e: MouseEvent) => {
+    if (this.touch) return;
     if (e.button === 0) this.releaseThrow();
   };
 
@@ -482,7 +537,7 @@ export class Experience {
 
   /** Starts winding up a throw, if one is possible here and now. */
   private beginCharge() {
-    if (!this.walking || !this.player.controls.isLocked || !this.canThrow || this.chargeStart >= 0) return;
+    if (!this.walking || !this.inputLive || !this.canThrow || this.chargeStart >= 0) return;
     const t = this.timer.getElapsed();
     if (t - this.lastThrow < 0.3) return;
     this.chargeStart = t;
@@ -495,7 +550,7 @@ export class Experience {
     const power = this.chargePower(t);
     this.chargeStart = -1;
     this.events.onCharge?.(-1);
-    if (!this.walking || !this.player.controls.isLocked || !this.canThrow) return;
+    if (!this.walking || !this.inputLive || !this.canThrow) return;
     this.lastThrow = t;
     this.snowballs.throw(this.camera, this.player.motion, power);
     this.sound?.throwSound();
@@ -516,23 +571,27 @@ export class Experience {
     if (letter === "m" && !e.repeat) this.toggleMute();
     if (letter === "f" && !e.repeat) this.beginCharge();
     if (letter === "n" && this.started) this.music?.skip(1);
-    if (letter === "e" && !e.repeat && this.walking && this.player.enabled) {
-      let handled = false;
-      for (const v of this.venues) {
-        const did = v.interact(this.camera.position);
-        if (!did) continue;
-        handled = true;
-        if (v.sliding) this.sound?.doorSlide();
-        if (did === "open" && !v.isInside(this.camera.position)) this.sound?.doorChime();
-        break;
-      }
-      if (!handled) this.interact();
-    }
+    if (letter === "e" && !e.repeat) this.use();
     // Keyboard media keys, when the browser hands them to the page rather than to the media session
     if (e.key === "MediaTrackNext") this.music?.skip(1);
     if (e.key === "MediaTrackPrevious") this.music?.skip(-1);
     if (e.key === "MediaPlayPause") this.music?.toggle();
   };
+
+  /** E, or the action button on a touch screen: doors, ladders, benches. */
+  use() {
+    if (!this.walking || !this.player.enabled) return;
+    let handled = false;
+    for (const v of this.venues) {
+      const did = v.interact(this.camera.position);
+      if (!did) continue;
+      handled = true;
+      if (v.sliding) this.sound?.doorSlide();
+      if (did === "open" && !v.isInside(this.camera.position)) this.sound?.doorChime();
+      break;
+    }
+    if (!handled) this.interact();
+  }
 
   private get feet() {
     return new THREE.Vector3(this.camera.position.x, this.player.feetY, this.camera.position.z);
@@ -621,13 +680,14 @@ export class Experience {
 
   /** The drop pulls the world away from you: the view widens as you pick up speed and snaps back on landing. */
   private fallView(dt: number) {
-    const target = 60 + this.rush * 16;
-    if (target > 60.01) this.widened = true;
+    const base = this.baseFov;
+    const target = base + this.rush * 16;
+    if (target > base + 0.01) this.widened = true;
     if (!this.widened) return;
     const fov = this.camera.fov + (target - this.camera.fov) * (1 - Math.exp(-dt * 2.5));
-    if (target <= 60.01 && Math.abs(fov - 60) < 0.02) {
+    if (target <= base + 0.01 && Math.abs(fov - base) < 0.02) {
       this.widened = false;
-      this.camera.fov = 60;
+      this.camera.fov = base;
     } else this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
   }
@@ -767,7 +827,7 @@ export class Experience {
     cu.uFall.value = this.streak;
 
     this.post.composer.render(dt);
-    this.ipod.render();
+    if (!this.touch) this.ipod.render();
     this.prevViewProj.copy(viewProj);
     this.hasPrev = true;
   }
@@ -838,8 +898,10 @@ export class Experience {
         this.events.onPrompt?.(prompt);
       }
     }
-    this.ipod.music = this.music;
-    this.ipod.update(dt, t, this.camera, { speed: this.player.motion.length(), grounded: !this.player.airborne });
+    if (!this.touch) {
+      this.ipod.music = this.music;
+      this.ipod.update(dt, t, this.camera, { speed: this.player.motion.length(), grounded: !this.player.airborne });
+    }
     if (this.chargeStart >= 0) this.events.onCharge?.(this.chargePower(t));
     this.snow.uniforms.uTime.value = t;
     this.updateWeather(dt, t);
@@ -902,7 +964,12 @@ export class Experience {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.post.composer.setSize(w, h);
-    this.ipod.resize();
+    if (!this.touch) this.ipod.resize();
+    this.baseFov = viewFov(this.camera.aspect);
+    if (!this.widened && this.walking) {
+      this.camera.fov = this.baseFov;
+      this.camera.updateProjectionMatrix();
+    }
     this.allocateTargets();
   };
 

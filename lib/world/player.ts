@@ -11,6 +11,8 @@ const GRAVITY_FALLING = 5.2;
 const TERMINAL = 15;
 // About 0.88 m of clearance: enough to land on a bonnet from the road
 const JUMP_V = 4.4;
+// Dragging to look on a touch screen (radians per pixel)
+const LOOK_SPEED = 0.0042;
 // Turning with the arrow keys (radians a second)
 const TURN_SPEED = 1.9;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -73,16 +75,33 @@ export class Player {
   }
 
   private onKey = (e: KeyboardEvent) => {
-    if (e.type === "keydown" && e.code === "Space" && !e.repeat && this.enabled && this.grounded) {
-      this.vy = JUMP_V;
-      this.grounded = false;
-      this.jumped = true;
-    }
+    if (e.type === "keydown" && e.code === "Space" && !e.repeat) this.jump();
     if (e.type === "keydown") this.keys.add(e.code);
     else this.keys.delete(e.code);
   };
 
   private clearKeys = () => this.keys.clear();
+
+  /** On touch screens: the on-screen stick (x right, y forward, -1..1; pushed to the rim to run). */
+  stick = new THREE.Vector2();
+  /** On touch screens: the right-hand stick, turning the head while held (x right, y up, -1..1). */
+  lookStick = new THREE.Vector2();
+
+  jump() {
+    if (!this.enabled || !this.grounded) return;
+    this.vy = JUMP_V;
+    this.grounded = false;
+    this.jumped = true;
+  }
+
+  /** Turns the head by a drag on a touch screen (pixels). */
+  look(dx: number, dy: number) {
+    if (!this.enabled) return;
+    const e = new THREE.Euler().setFromQuaternion(this.camera.quaternion, "YXZ");
+    e.y -= dx * LOOK_SPEED;
+    e.x = THREE.MathUtils.clamp(e.x - dy * LOOK_SPEED, -Math.PI / 2 + 0.05, Math.PI / 2 - 0.05);
+    this.camera.quaternion.setFromEuler(e);
+  }
 
   /** Puts you down here, standing still (after a climb, or getting up from a bench). */
   place(x: number, feet: number, z: number) {
@@ -97,7 +116,8 @@ export class Player {
   /** Up / down on a ladder: the forward and back keys (by position, so Z/S on AZERTY), -1..1. */
   get climbInput() {
     const k = this.keys;
-    return (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0);
+    const stick = Math.abs(this.stick.y) > 0.35 ? Math.sign(this.stick.y) : 0;
+    return THREE.MathUtils.clamp((k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0) + stick, -1, 1);
   }
 
   get shiftHeld() {
@@ -106,7 +126,7 @@ export class Player {
 
   /** Whether any movement key is held. */
   get wantsToMove() {
-    return ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].some((k) => this.keys.has(k));
+    return this.stick.lengthSq() > 0.04 || ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].some((k) => this.keys.has(k));
   }
 
   update(dt: number, time: number) {
@@ -115,14 +135,25 @@ export class Player {
       (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0),
       (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0)
     );
+    // The touch stick, when it's being pushed, steers instead (gently near the middle, running at the rim)
+    const pushed = this.stick.length();
+    if (pushed > 0.12) input.copy(this.stick);
     if (!this.enabled) input.set(0, 0);
     // The arrow keys turn the head, so the walk works from the keyboard alone (up and down still walk)
     const turn = this.enabled ? (k.has("ArrowLeft") ? 1 : 0) - (k.has("ArrowRight") ? 1 : 0) : 0;
     if (turn) this.camera.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, turn * TURN_SPEED * dt));
+    // Held look stick: turns faster the further it's pushed (eased, so small pushes make fine adjustments)
+    if (this.enabled && this.lookStick.lengthSq() > 0.01) {
+      const ease = (v: number) => Math.sign(v) * v * v;
+      const e = new THREE.Euler().setFromQuaternion(this.camera.quaternion, "YXZ");
+      e.y -= ease(this.lookStick.x) * TURN_SPEED * 1.3 * dt;
+      e.x = THREE.MathUtils.clamp(e.x + ease(this.lookStick.y) * TURN_SPEED * 0.8 * dt, -Math.PI / 2 + 0.05, Math.PI / 2 - 0.05);
+      this.camera.quaternion.setFromEuler(e);
+    }
     this.inputActive = input.lengthSq() > 0;
     if (input.lengthSq() > 1) input.normalize();
 
-    this.running = k.has("ShiftLeft") || k.has("ShiftRight");
+    this.running = k.has("ShiftLeft") || k.has("ShiftRight") || pushed > 0.95;
     const speed = this.running ? 5.4 : 2.4;
     const forward = new THREE.Vector3();
     this.camera.getWorldDirection(forward);

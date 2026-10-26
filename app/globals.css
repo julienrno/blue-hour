@@ -46,6 +46,7 @@ body {
   cursor: pointer;
   background: radial-gradient(ellipse at 50% 55%, rgba(40, 64, 140, 0.05), rgba(6, 10, 28, 0.55));
   user-select: none;
+  padding: 24px;
 }
 
 .veil.is-waiting {
@@ -58,7 +59,12 @@ body {
   line-height: 1.1;
 }
 
-.veil h1 span {
+.veil h1 .word {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.veil h1 .ch {
   display: inline-block;
   white-space: pre;
   /* Hidden until the intro animates them in (so they never flash up as the loader leaves) */
@@ -402,4 +408,140 @@ body {
 .stage .ipod-vm {
   position: fixed;
   pointer-events: none;
+}
+
+/* ---------- Phones and tablets ---------- */
+
+/* The map shrinks into the top-left corner, the player sits next to it, pause and mute under the player; the
+   bottom belongs to the thumbs. Everything stays clear of notches and the home bar */
+.is-touch .minimap {
+  top: max(16px, env(safe-area-inset-top));
+  left: max(16px, env(safe-area-inset-left));
+  bottom: auto;
+  width: 88px !important;
+  height: 88px !important;
+}
+
+.is-touch .sc-player {
+  top: max(16px, env(safe-area-inset-top));
+  left: calc(max(16px, env(safe-area-inset-left)) + 100px);
+  right: max(16px, env(safe-area-inset-right));
+  width: auto;
+  /* The phone version of the widget draws its waveform taller than the desktop one */
+  height: 30px;
+}
+
+.touch {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  --edge: max(20px, env(safe-area-inset-bottom));
+}
+
+.touch-look {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+.touch-stick {
+  position: absolute;
+  bottom: var(--edge);
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(243, 213, 72, 0.55);
+  background: rgba(6, 10, 28, 0.25);
+  touch-action: none;
+  display: grid;
+  place-items: center;
+}
+
+.touch-stick.is-walk {
+  left: max(20px, env(safe-area-inset-left));
+}
+
+.touch-stick.is-look {
+  right: max(20px, env(safe-area-inset-right));
+}
+
+.touch-knob {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(243, 213, 72, 0.85);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.touch-buttons {
+  position: absolute;
+  right: max(20px, env(safe-area-inset-right));
+  /* Above the look stick */
+  bottom: calc(var(--edge) + 116px + 16px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.touch-row {
+  display: flex;
+  gap: 10px;
+}
+
+.touch-btn {
+  min-width: 58px;
+  height: 58px;
+  padding: 0 0.9em;
+  border-radius: 999px;
+  border: 1.5px solid var(--ink);
+  background: rgba(6, 10, 28, 0.3);
+  color: var(--ink);
+  font: inherit;
+  font-style: italic;
+  font-size: 1rem;
+  touch-action: none;
+}
+
+.touch-btn:active {
+  background: rgba(243, 213, 72, 0.25);
+}
+
+.touch-action {
+  height: 48px;
+  background: rgba(243, 213, 72, 0.18);
+}
+
+.touch-bar {
+  position: absolute;
+  top: calc(max(16px, env(safe-area-inset-top)) + 44px);
+  right: max(16px, env(safe-area-inset-right));
+  display: flex;
+  gap: 10px;
+}
+
+.touch-small {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1.5px solid rgba(243, 213, 72, 0.6);
+  background: rgba(6, 10, 28, 0.3);
+  color: var(--ink);
+  touch-action: manipulation;
+}
+
+.touch-small svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }

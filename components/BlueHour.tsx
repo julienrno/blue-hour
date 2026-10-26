@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import type { Experience } from "@/lib/world/Experience";
 import Minimap from "@/components/Minimap";
+import TouchControls from "@/components/TouchControls";
 import { SoundCloudMusic, widgetSrc } from "@/lib/world/soundcloud";
 
 const TITLE = "pov: it’s blue hour in eastern europe";
@@ -39,6 +40,9 @@ export default function BlueHour() {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const [credits, setCredits] = useState(false);
+  // Phones and tablets (a touch screen as the main input, not a laptop that also has one)
+  const [touch, setTouch] = useState(false);
+  useEffect(() => setTouch(window.matchMedia("(hover: none) and (pointer: coarse)").matches), []);
   const enterRef = useRef<HTMLButtonElement>(null);
   // Set by the first pause: from then on the veil invites you back, including while it fades out on resume
   const [wandered, setWandered] = useState(false);
@@ -152,7 +156,7 @@ export default function BlueHour() {
     gsap.to(veil, { autoAlpha: 1, duration: 0.8, ease: "sine.out" });
     if (phase === "intro" && loaded) {
       gsap.fromTo(
-        veil.querySelectorAll("h1 span"),
+        veil.querySelectorAll("h1 .ch"),
         { opacity: 0, y: 6, filter: "blur(6px)" },
         { opacity: 1, y: 0, filter: "blur(0px)", duration: 1.6, stagger: 0.035, ease: "sine.out", delay: 0.6 }
       );
@@ -199,14 +203,19 @@ export default function BlueHour() {
   };
 
   return (
-    <main className="stage">
+    <main className={touch ? "stage is-touch" : "stage"}>
       <canvas
         ref={canvasRef}
         role="img"
         aria-label="First-person view of a snowy street of Soviet panel blocks at blue hour, street lamps glowing in the fog"
       />
       {phase === "walking" && <div ref={crosshairRef} className="crosshair" aria-hidden="true" />}
-      {phase === "walking" && prompt && (
+      {phase === "walking" && prompt && touch && prompt === "@ladder" && (
+        <div className="prompt" role="status">
+          push the stick up or down to climb
+        </div>
+      )}
+      {phase === "walking" && prompt && !touch && (
         <div className="prompt" role="status">
           {prompt === "@ladder" ? (
             <>
@@ -224,7 +233,8 @@ export default function BlueHour() {
         </div>
       )}
       {uiIn && <Minimap exp={exp} />}
-      {uiIn && (
+      {touch && exp && phase === "walking" && <TouchControls exp={exp} prompt={prompt} muted={muted} />}
+      {uiIn && !touch && (
         <div className="hud">
           <span className="hint">
             {/* Laid out as on the keyboard, with the letters this keyboard actually prints there (ZQSD on AZERTY) */}
@@ -292,9 +302,15 @@ export default function BlueHour() {
         ) : loaded ? (
           <>
             <h1 aria-label={TITLE}>
-              {TITLE.split("").map((ch, i) => (
-                <span key={i} aria-hidden="true">
-                  {ch}
+              {/* Letter by letter for the fade-in, kept together by word so a narrow screen wraps between words */}
+              {TITLE.split(" ").map((word, w) => (
+                <span key={w} className="word" aria-hidden="true">
+                  {word.split("").map((ch, i) => (
+                    <span key={i} className="ch">
+                      {ch}
+                    </span>
+                  ))}
+                  {w < TITLE.split(" ").length - 1 ? <span className="ch"> </span> : null}
                 </span>
               ))}
             </h1>
@@ -306,7 +322,7 @@ export default function BlueHour() {
               disabled={phase === "intro" && !clickable}
               aria-describedby="how-to"
             >
-              {wandered ? "click to keep wandering" : "click to wander"}
+              {`${touch ? "tap" : "click"} to ${wandered ? "keep wandering" : "wander"}`}
             </button>
             {/* Credits: their own click, so opening them doesn't start the walk */}
             <button
