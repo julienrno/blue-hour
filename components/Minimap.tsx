@@ -168,5 +168,5 @@ export default function Minimap({ exp }: { exp: Experience | null }) {
     return () => cancelAnimationFrame(raf);
   }, [exp]);
 
-  return <canvas ref={ref} className="minimap" style={{ width: SIZE, height: SIZE }} />;
+  return <canvas ref={ref} className="minimap" style={{ width: SIZE, height: SIZE }} aria-hidden="true" />;
 }

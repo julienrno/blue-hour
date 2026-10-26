@@ -47,12 +47,16 @@ export type ExperienceEvents = {
   onUiIn?: () => void;
   /** Loading: 0-1 and a line about what is being built right now (1 once the city is ready to walk into). */
   onLoad?: (progress: number, line: string) => void;
+  /** The browser would not capture the mouse (too soon after Esc): the pause screen should stay up. */
+  onLockRefused?: () => void;
 };
 
 // How long the intro's mist takes to clear (s)
 const INTRO_MIST = 4.2;
 // Seconds of camera movement smeared into each frame's motion blur
 const EXPOSURE = 0.03;
+// How long after Esc the browser refuses to capture the mouse again (ms)
+const RELOCK_DELAY = 1100;
 
 export class Experience {
   renderer: THREE.WebGLRenderer;
@@ -226,6 +230,7 @@ export class Experience {
       this.events.onLockChange?.(true);
     });
     this.player.controls.addEventListener("unlock", () => {
+      this.unlockedAt = performance.now();
       this.player.enabled = false;
       this.sound?.duck(true);
       this.events.onLockChange?.(false);
@@ -237,6 +242,7 @@ export class Experience {
     releaseAssets();
     window.addEventListener("resize", this.onResize);
     window.addEventListener("keydown", this.onKey);
+    window.addEventListener("keyup", this.onKeyUp);
     document.addEventListener("visibilitychange", this.onVisibility);
     window.addEventListener("mousedown", this.onMouseDown);
     window.addEventListener("mouseup", this.onMouseUp);
@@ -404,13 +410,50 @@ export class Experience {
     this.lock();
   }
 
+  /**
+   * Captures the mouse. Right after Esc the browser won't for about a second, so resuming doesn't wait for it: the
+   * walk carries on at once (keys work, the pause screen goes) and the mouse is captured as soon as the browser
+   * allows, or on the next click if it still says no.
+   */
   lock() {
+    if (this.player.controls.isLocked) return;
+    const wait = RELOCK_DELAY - (performance.now() - this.unlockedAt);
+    if (wait > 0 && this.started) {
+      this.player.enabled = true;
+      this.sound?.duck(false);
+      this.events.onLockChange?.(true);
+      clearTimeout(this.relock);
+      this.relock = window.setTimeout(() => this.requestLock(), wait);
+      return;
+    }
+    this.requestLock();
+  }
+
+  private requestLock() {
+    const el = this.player.controls.domElement as HTMLElement;
+    if (document.pointerLockElement === el) return;
     try {
-      this.player.controls.lock();
+      const request = el.requestPointerLock() as unknown as Promise<void> | undefined;
+      // Already walking again: the next click will capture it. Otherwise keep the pause screen up for another try
+      request?.catch?.(() => {
+        if (!this.player.enabled) this.events.onLockRefused?.();
+      });
     } catch {
       this.player.enabled = true;
     }
   }
+
+  /** Esc while walking but before the mouse was captured again: pause, as Esc normally would. */
+  private softPause() {
+    clearTimeout(this.relock);
+    this.player.enabled = false;
+    this.chargeStart = -1;
+    this.events.onCharge?.(-1);
+    this.sound?.duck(true);
+    this.events.onLockChange?.(false);
+  }
+  private unlockedAt = -Infinity;
+  private relock = 0;
 
   /** Press to pick up a snowball; the longer you hold, the harder and further it flies when you let go. */
   /** No snowballs indoors. */
@@ -419,14 +462,35 @@ export class Experience {
   }
 
   private onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0 || !this.walking || !this.player.controls.isLocked || !this.canThrow) return;
-    const t = this.timer.getElapsed();
-    if (t - this.lastThrow < 0.3) return;
-    this.chargeStart = t;
+    // Resumed but the mouse isn't captured yet: this click captures it
+    if (this.walking && this.player.enabled && !this.player.controls.isLocked) {
+      this.requestLock();
+      return;
+    }
+    if (e.button === 0) this.beginCharge();
   };
 
   private onMouseUp = (e: MouseEvent) => {
-    if (e.button !== 0 || this.chargeStart < 0) return;
+    if (e.button === 0) this.releaseThrow();
+  };
+
+  /** F works like the mouse button: hold to charge, let go to throw (by the letter, so it is F on any layout). */
+  private onKeyUp = (e: KeyboardEvent) => {
+    const typed = e.key.toLowerCase();
+    if (typed === "f" || e.code === "KeyF") this.releaseThrow();
+  };
+
+  /** Starts winding up a throw, if one is possible here and now. */
+  private beginCharge() {
+    if (!this.walking || !this.player.controls.isLocked || !this.canThrow || this.chargeStart >= 0) return;
+    const t = this.timer.getElapsed();
+    if (t - this.lastThrow < 0.3) return;
+    this.chargeStart = t;
+  }
+
+  /** Lets the snowball go, as hard as it was charged. */
+  private releaseThrow() {
+    if (this.chargeStart < 0) return;
     const t = this.timer.getElapsed();
     const power = this.chargePower(t);
     this.chargeStart = -1;
@@ -435,7 +499,7 @@ export class Experience {
     this.lastThrow = t;
     this.snowballs.throw(this.camera, this.player.motion, power);
     this.sound?.throwSound();
-  };
+  }
 
   /** 0 for a tap, 1 after holding for about a second. */
   private chargePower(t: number) {
@@ -448,7 +512,9 @@ export class Experience {
     // Layouts without Latin letters fall back to the key's position
     const typed = e.key.toLowerCase();
     const letter = /^[a-z]$/.test(typed) ? typed : e.code.startsWith("Key") ? e.code.slice(3).toLowerCase() : "";
+    if (e.key === "Escape" && this.walking && this.player.enabled && !this.player.controls.isLocked) this.softPause();
     if (letter === "m" && !e.repeat) this.toggleMute();
+    if (letter === "f" && !e.repeat) this.beginCharge();
     if (letter === "n" && this.started) this.music?.skip(1);
     if (letter === "e" && !e.repeat && this.walking && this.player.enabled) {
       let handled = false;
@@ -543,7 +609,7 @@ export class Experience {
     // (Builds quickly, and lets go over most of a second after you land, so touching down is not a hard cut)
     const rush = this.falling * THREE.MathUtils.smoothstep(p.fallSpeed, 2, 14);
     this.rush += (rush - this.rush) * (1 - Math.exp(-dt * (rush > this.rush ? 6 : 1.6)));
-    const amp = this.falling * 0.014 + this.rush * 0.07 + this.quake * 0.12;
+    const amp = (this.falling * 0.014 + this.rush * 0.07 + this.quake * 0.12);
     // Faster and faster buffeting as you speed up, and the head rolling with it
     const quick = 1 + this.rush * 0.8;
     const n = (f: number, o: number) => Math.sin(t * f * quick + o) * 0.6 + Math.sin(t * f * quick * 1.73 + o * 2.1) * 0.4;
@@ -866,6 +932,7 @@ export class Experience {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.onResize);
     window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("keyup", this.onKeyUp);
     document.removeEventListener("visibilitychange", this.onVisibility);
     window.removeEventListener("mousedown", this.onMouseDown);
     window.removeEventListener("mouseup", this.onMouseUp);

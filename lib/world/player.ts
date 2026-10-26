@@ -11,6 +11,9 @@ const GRAVITY_FALLING = 5.2;
 const TERMINAL = 15;
 // About 0.88 m of clearance: enough to land on a bonnet from the road
 const JUMP_V = 4.4;
+// Turning with the arrow keys (radians a second)
+const TURN_SPEED = 1.9;
+const UP = new THREE.Vector3(0, 1, 0);
 // Ledges up to this height can be stepped onto; anything with a top lower than the feet plus this is walkable
 const STEP = 0.3;
 // In the air you can pull yourself onto a ledge a little higher than you could step
@@ -59,6 +62,10 @@ export class Player {
     private heightAt: (x: number, z: number) => number
   ) {
     this.controls = new PointerLockControls(camera, dom);
+    // A refused lock is expected (the browser won't relock for about a second after Esc) and handled where we ask
+    // for it, so the controls' own console error is just noise
+    const quiet = this.controls as unknown as { _onPointerlockError: EventListener };
+    dom.ownerDocument.removeEventListener("pointerlockerror", quiet._onPointerlockError);
     this.controls.pointerSpeed = 0.6;
     window.addEventListener("keydown", this.onKey);
     window.addEventListener("keyup", this.onKey);
@@ -105,10 +112,13 @@ export class Player {
   update(dt: number, time: number) {
     const k = this.keys;
     const input = new THREE.Vector2(
-      (k.has("KeyD") || k.has("ArrowRight") ? 1 : 0) - (k.has("KeyA") || k.has("ArrowLeft") ? 1 : 0),
+      (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0),
       (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0)
     );
     if (!this.enabled) input.set(0, 0);
+    // The arrow keys turn the head, so the walk works from the keyboard alone (up and down still walk)
+    const turn = this.enabled ? (k.has("ArrowLeft") ? 1 : 0) - (k.has("ArrowRight") ? 1 : 0) : 0;
+    if (turn) this.camera.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, turn * TURN_SPEED * dt));
     this.inputActive = input.lengthSq() > 0;
     if (input.lengthSq() > 1) input.normalize();
 

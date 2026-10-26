@@ -121,6 +121,8 @@ export class IPodViewModel {
   /** Puts the iPod's canvas just above the world's, below the menus. */
   mount(after: HTMLCanvasElement) {
     after.insertAdjacentElement("afterend", this.canvas);
+    // Decoration: the track it shows is in the SoundCloud player's title
+    this.canvas.setAttribute("aria-hidden", "true");
     const r = new THREE.WebGLRenderer({ canvas: this.canvas, alpha: true, antialias: true });
     r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     r.setClearColor(0x000000, 0);
