@@ -851,6 +851,7 @@ export class Experience {
       const climb = this.rooftop.update(dt, this.player.enabled ? this.player.climbInput : 0, this.player.shiftHeld);
       if (climb) {
         this.camera.position.copy(climb.eye);
+        this.player.turnHead(dt);
         if (climb.done) this.player.place(climb.done.x, climb.done.y, climb.done.z);
       } else if (this.seat) this.updateSeat(dt);
       else if (this.rising) this.updateRising(dt);

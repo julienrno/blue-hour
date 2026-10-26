@@ -427,8 +427,8 @@ body {
   left: calc(max(16px, env(safe-area-inset-left)) + 100px);
   right: max(16px, env(safe-area-inset-right));
   width: auto;
-  /* The phone version of the widget draws its waveform taller than the desktop one */
-  height: 30px;
+  /* Kept at the mini player's 20px: any taller and SoundCloud switches to its full white layout */
+  height: 20px;
 }
 
 .touch {
@@ -544,4 +544,26 @@ body {
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* Under the player on phones, until the music is playing */
+.music-hint {
+  position: fixed;
+  z-index: 5;
+  top: calc(max(16px, env(safe-area-inset-top)) + 26px);
+  left: calc(max(16px, env(safe-area-inset-left)) + 104px);
+  font-style: italic;
+  font-size: 0.95rem;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6));
+  animation: music-hint 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes music-hint {
+  from {
+    opacity: 0.5;
+  }
+  to {
+    opacity: 1;
+  }
 }

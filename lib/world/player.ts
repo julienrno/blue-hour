@@ -13,6 +13,9 @@ const TERMINAL = 15;
 const JUMP_V = 4.4;
 // Dragging to look on a touch screen (radians per pixel)
 const LOOK_SPEED = 0.0042;
+// The touch look stick at full push (radians a second): a half turn takes about three seconds
+const LOOK_STICK_YAW = 1.05;
+const LOOK_STICK_PITCH = 0.6;
 // Turning with the arrow keys (radians a second)
 const TURN_SPEED = 1.9;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -94,6 +97,22 @@ export class Player {
     this.jumped = true;
   }
 
+  /** The touch look stick, every frame: also on a ladder or a bench, where the walking update doesn't run. */
+  turnHead(dt: number) {
+    // Held look stick: a slow, steady turn, faster the further it's pushed (cubic, so most of its travel is for fine
+    // aiming), with a dead zone so a resting thumb doesn't drift the view
+    if (this.enabled && this.lookStick.lengthSq() > 0.01) {
+      const ease = (v: number) => {
+        const a = Math.max(0, (Math.abs(v) - 0.15) / 0.85);
+        return Math.sign(v) * a * a * a;
+      };
+      const e = new THREE.Euler().setFromQuaternion(this.camera.quaternion, "YXZ");
+      e.y -= ease(this.lookStick.x) * LOOK_STICK_YAW * dt;
+      e.x = THREE.MathUtils.clamp(e.x + ease(this.lookStick.y) * LOOK_STICK_PITCH * dt, -Math.PI / 2 + 0.05, Math.PI / 2 - 0.05);
+      this.camera.quaternion.setFromEuler(e);
+  }
+  }
+
   /** Turns the head by a drag on a touch screen (pixels). */
   look(dx: number, dy: number) {
     if (!this.enabled) return;
@@ -142,14 +161,7 @@ export class Player {
     // The arrow keys turn the head, so the walk works from the keyboard alone (up and down still walk)
     const turn = this.enabled ? (k.has("ArrowLeft") ? 1 : 0) - (k.has("ArrowRight") ? 1 : 0) : 0;
     if (turn) this.camera.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, turn * TURN_SPEED * dt));
-    // Held look stick: turns faster the further it's pushed (eased, so small pushes make fine adjustments)
-    if (this.enabled && this.lookStick.lengthSq() > 0.01) {
-      const ease = (v: number) => Math.sign(v) * v * v;
-      const e = new THREE.Euler().setFromQuaternion(this.camera.quaternion, "YXZ");
-      e.y -= ease(this.lookStick.x) * TURN_SPEED * 1.3 * dt;
-      e.x = THREE.MathUtils.clamp(e.x + ease(this.lookStick.y) * TURN_SPEED * 0.8 * dt, -Math.PI / 2 + 0.05, Math.PI / 2 - 0.05);
-      this.camera.quaternion.setFromEuler(e);
-    }
+    this.turnHead(dt);
     this.inputActive = input.lengthSq() > 0;
     if (input.lengthSq() > 1) input.normalize();
 

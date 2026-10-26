@@ -40,6 +40,8 @@ export default function BlueHour() {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const [credits, setCredits] = useState(false);
+  // Phones won't let a page start music inside SoundCloud's player: if it hasn't started, point at its play button
+  const [musicHint, setMusicHint] = useState(false);
   // Phones and tablets (a touch screen as the main input, not a laptop that also has one)
   const [touch, setTouch] = useState(false);
   useEffect(() => setTouch(window.matchMedia("(hover: none) and (pointer: coarse)").matches), []);
@@ -196,6 +198,20 @@ export default function BlueHour() {
     if (!exp || (phase === "intro" && !clickable)) return;
     // Start the music right inside the click, so the browser lets the player make sound
     if (phase === "intro") musicRef.current?.start();
+    if (phase === "intro" && touch) {
+      window.setTimeout(() => {
+        if (musicRef.current?.state.playing) return;
+        setMusicHint(true);
+        // Gone once the music plays (or after a while either way)
+        const started = Date.now();
+        const check = window.setInterval(() => {
+          if (musicRef.current?.state.playing || Date.now() - started > 20000) {
+            setMusicHint(false);
+            window.clearInterval(check);
+          }
+        }, 500);
+      }, 2500);
+    }
     // Let the melt be seen: the title leaves as the mist starts to thin. Resuming clears the screen right away
     if (phase === "intro") gsap.to(veilRef.current, { autoAlpha: 0, duration: 0.9, ease: "sine.in" });
     else gsap.to(veilRef.current, { autoAlpha: 0, duration: 0.25, ease: "sine.in", overwrite: true });
@@ -234,6 +250,7 @@ export default function BlueHour() {
       )}
       {uiIn && <Minimap exp={exp} />}
       {touch && exp && phase === "walking" && <TouchControls exp={exp} prompt={prompt} muted={muted} />}
+      {touch && musicHint && uiIn && <div className="music-hint">↑ tap play for music</div>}
       {uiIn && !touch && (
         <div className="hud">
           <span className="hint">
