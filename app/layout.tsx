@@ -13,9 +13,23 @@ const serif = localFont({
   display: "swap",
 });
 
+// The live address on Vercel (it follows the project's production domain, so switching to a custom domain later
+// needs no change here); localhost when running locally
+const SITE = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : "http://localhost:3000";
+const TITLE = "blue hour";
+const DESCRIPTION =
+  "pov: it’s blue hour in eastern europe. wander a snowed-in town of panel blocks at dusk: climb the roofs and the radio mast, throw snowballs, find the 24h shop.";
+
+// The share image and the icons are files next to this one (opengraph-image, twitter-image, icon, apple-icon)
 export const metadata: Metadata = {
-  title: "blue hour",
-  description: "pov: it's blue hour in eastern europe",
+  metadataBase: new URL(SITE),
+  title: TITLE,
+  description: DESCRIPTION,
+  applicationName: TITLE,
+  openGraph: { title: TITLE, description: DESCRIPTION, siteName: TITLE, type: "website", url: "/" },
+  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
 };
 
 export const viewport: Viewport = {

@@ -24,6 +24,11 @@ export default function BlueHour() {
   const [shown, setShown] = useState(0);
   const [line, setLine] = useState("waking the city up");
   const [loaded, setLoaded] = useState(false);
+  // Set by the first pause: from then on the veil invites you back, including while it fades out on resume
+  const [wandered, setWandered] = useState(false);
+  useEffect(() => {
+    if (phase === "paused") setWandered(true);
+  }, [phase]);
   const loaderRef = useRef<HTMLDivElement>(null);
   const pctRef = useRef({ v: 0 });
   const [keys, setKeys] = useState({ w: "W", a: "A", s: "S", d: "D" });
@@ -227,7 +232,7 @@ export default function BlueHour() {
               ))}
             </h1>
             {/* Looks like a button, but the whole screen is the button */}
-            <p className="enter">{phase === "paused" ? "click to keep wandering" : "click to wander"}</p>
+            <p className="enter">{wandered ? "click to keep wandering" : "click to wander"}</p>
           </>
         ) : (
           <div ref={loaderRef} className="loader" aria-live="polite">
