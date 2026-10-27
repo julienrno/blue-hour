@@ -148,7 +148,8 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* A quiet link at the foot of the title screen, and the list it opens */
+/* A quiet link at the foot of the title screen, and the list it opens; on the pause screen both sit above the
+   row of controls */
 .credits-toggle {
   position: fixed;
   bottom: 22px;
@@ -157,7 +158,9 @@ body {
   font: inherit;
   font-size: 0.9rem;
   font-style: italic;
-  color: rgba(243, 213, 72, 0.6);
+  color: var(--ink);
+  /* Buttons drop the page's text shadow by default */
+  text-shadow: inherit;
   background: none;
   border: 0;
   cursor: pointer;
@@ -166,8 +169,32 @@ body {
   animation: credits-in 0.5s ease-out 3.2s both;
 }
 
-.credits-toggle:hover {
+/* Full yellow like the rest of the UI, dimming on hover */
+.credits-toggle:hover,
+.signature:hover {
+  color: rgba(243, 213, 72, 0.6);
+}
+
+.veil.over-hud .credits-toggle {
+  bottom: 112px;
+}
+
+.veil.over-hud .credits {
+  bottom: 146px;
+}
+
+/* Who made it, in the top-left corner once the intro is over, arriving with the map */
+.signature {
+  position: fixed;
+  top: 24px;
+  left: 28px;
+  z-index: 7;
+  font-size: 0.9rem;
+  font-style: italic;
   color: var(--ink);
+  text-decoration: none;
+  transition: color 0.15s ease;
+  animation: minimap-in 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) both;
 }
 
 @keyframes credits-in {
@@ -195,6 +222,11 @@ body {
 
 .credits p {
   opacity: 0.8;
+}
+
+.credits .credits-author {
+  margin-bottom: 0.6rem;
+  opacity: 1;
 }
 
 .credits ul {
@@ -450,6 +482,17 @@ body {
   width: auto;
   /* Kept at the mini player's 20px: any taller and SoundCloud switches to its full white layout */
   height: 20px;
+}
+
+/* Under the map, and not tappable mid-walk, where a stray tap would leave the page */
+.is-touch .signature {
+  top: calc(max(16px, env(safe-area-inset-top)) + 100px);
+  left: max(16px, env(safe-area-inset-left));
+  font-size: 0.8rem;
+}
+
+.is-touch .signature.is-walking {
+  pointer-events: none;
 }
 
 .touch {

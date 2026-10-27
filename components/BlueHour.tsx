@@ -10,6 +10,9 @@ import { SoundCloudMusic, widgetSrc } from "@/lib/world/soundcloud";
 const TITLE = "pov: it’s blue hour in eastern europe";
 
 // The models that aren't generated in code, as their licences ask to be credited (CC BY 4.0 unless noted)
+const AUTHOR_URL = "https://julienrenau.com/";
+const AUTHOR_X = "https://x.com/julien_rno";
+
 const CREDITS = [
   { what: "Soviet apartment building", who: "Colin.Greenall", url: "https://sketchfab.com/3d-models/low-poly-soviet-apartment-building-8k-05229ac1d1f94e6c8cacaad91110c602" },
   { what: "Audi 80", who: "l.corijn", url: "https://sketchfab.com/3d-models/audi-80-lowpoly-b3e18613e61a41b295052cf2b4b70099" },
@@ -250,6 +253,18 @@ export default function BlueHour() {
         </div>
       )}
       {uiIn && <Minimap exp={exp} />}
+      {/* Who made it: in the top-left corner from the end of the intro on, walking or paused (the map has the
+          bottom-left, the music the top-right) */}
+      {uiIn && (
+        <a
+          className={phase === "walking" ? "signature is-walking" : "signature"}
+          href={AUTHOR_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          made by julien renau
+        </a>
+      )}
       {touch && exp && phase === "walking" && <TouchControls exp={exp} prompt={prompt} muted={muted} />}
       {touch && musicHint && uiIn && <div className="music-hint">↑ tap play for music</div>}
       {uiIn && !touch && (
@@ -309,7 +324,7 @@ export default function BlueHour() {
         scrolling="no"
         frameBorder="no"
       />
-      <div ref={veilRef} className={phase === "intro" && !clickable ? "veil is-waiting" : "veil"} onClick={enter}>
+      <div ref={veilRef} className={`veil${phase === "intro" && !clickable ? " is-waiting" : ""}${uiIn && !touch ? " over-hud" : ""}`} onClick={enter}>
         {failed ? (
           <div className="loader" role="alert">
             <span className="loader-line">
@@ -356,6 +371,16 @@ export default function BlueHour() {
             </button>
             {credits && (
               <div className="credits" onClick={(e) => e.stopPropagation()}>
+                <p className="credits-author">
+                  Made by{" "}
+                  <a href={AUTHOR_URL} target="_blank" rel="noreferrer">
+                    Julien Renau
+                  </a>{" "}
+                  with Claude Opus 5.5 ·{" "}
+                  <a href={AUTHOR_X} target="_blank" rel="noreferrer">
+                    @julien_rno
+                  </a>
+                </p>
                 <p>
                   Everything else is generated in code: the town, snow, fog, rooms behind the windows and every sound.
                   Models modified (simplified, rescaled, recoloured). CC BY 4.0 unless noted.
