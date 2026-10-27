@@ -35,7 +35,12 @@ const GradeShader = {
     uniform float uAspect;
     varying vec2 vUv;
 
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    // A hash without sin(): sin-based ones lose precision on big inputs and show up as faint stripes in the grain
+    float hash(vec2 p) {
+      vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+      p3 += dot(p3, p3.yzx + 33.33);
+      return fract((p3.x + p3.y) * p3.z);
+    }
 
     void main() {
       vec2 uv = vUv;
@@ -60,7 +65,8 @@ const GradeShader = {
       col += vec3(0.004, 0.008, 0.025) * (1.0 - smoothstep(0.0, 0.2, lum));
       col *= 1.0 - smoothstep(0.2 - 0.12 * uRush, 0.9 - 0.3 * uRush, r2 * 1.7) * (0.6 + 0.3 * uRush);
 
-      float g = hash(vUv * vec2(1931.0, 1171.0) + fract(uTime * 7.0)) - 0.5;
+      // One grain value per screen pixel, reshuffled every frame
+      float g = hash(gl_FragCoord.xy + floor(fract(uTime * 7.0) * 977.0) * vec2(17.0, 31.0)) - 0.5;
       col += g * uGrain * (0.25 + sqrt(max(lum, 0.0)));
       gl_FragColor = vec4(max(col, 0.0) * uFade, 1.0);
     }

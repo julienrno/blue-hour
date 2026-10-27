@@ -225,7 +225,8 @@ export default function BlueHour() {
         role="img"
         aria-label="First-person view of a snowy street of Soviet panel blocks at blue hour, street lamps glowing in the fog"
       />
-      {phase === "walking" && <div ref={crosshairRef} className="crosshair" aria-hidden="true" />}
+      {/* Arrives with the map, and stays mounted after that so a pause doesn't replay its entrance */}
+      {uiIn && <div ref={crosshairRef} className={phase === "walking" ? "crosshair" : "crosshair is-hidden"} aria-hidden="true" />}
       {phase === "walking" && prompt && touch && prompt === "@ladder" && (
         <div className="prompt" role="status">
           push the stick up or down to climb

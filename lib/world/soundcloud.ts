@@ -30,6 +30,16 @@ const LOAD_OPTIONS = {
   visual: false,
 };
 
+// Every start (a new track, a resume, the first click) fades in from silence over this long
+const FADE_MS = 800;
+// and the volume keeps being pushed to the widget for a while after, since it resets to full on its own when a
+// track loads, and a single setVolume sent before the new sound exists is simply lost
+const GUARD_MS = 2500;
+// How often the volume is pushed while fading or guarding
+const PUSH_EVERY = 50;
+// Gives up holding silence if a held track never actually starts (the next start holds again)
+const HOLD_LIMIT = 15000;
+
 export function widgetSrc(autoPlay = false, url = PLAYLIST[0]) {
   const params = new URLSearchParams({ url, auto_play: String(autoPlay), ...WIDGET_OPTIONS });
   return `https://w.soundcloud.com/player/?${params}`;
@@ -45,6 +55,7 @@ type Widget = {
   setVolume(v: number): void;
   isPaused(cb: (paused: boolean) => void): void;
   getCurrentSound(cb: (s: Sound | null) => void): void;
+  getVolume(cb: (v: number) => void): void;
   load(url: string, options: Record<string, unknown>): void;
 };
 type SCGlobal = { Widget: ((el: HTMLIFrameElement) => Widget) & { Events: Record<string, string> } };
@@ -78,7 +89,14 @@ function loadApi() {
 
 export class SoundCloudMusic {
   private widget?: Widget;
+  // The level asked for (the mix, ducking and mute included) and the fade-in multiplier on top of it
   private volume = 0.54;
+  private fade = 1;
+  private fadeFrom = 1;
+  private rampFrom: number | null = null;
+  private heldAt = 0;
+  private pushTimer?: number;
+  private lastCheck = 0;
   private bound = false;
   private index = 0;
   ready: Promise<boolean>;
@@ -121,7 +139,7 @@ export class SoundCloudMusic {
             w.bind(SC.Widget.Events.READY, () => {
               window.clearTimeout(timeout);
               this.widget = w;
-              w.setVolume(Math.round(this.volume * 100));
+              this.push();
               this.refreshSound();
               // Bindings survive load(), so they are attached once
               if (!this.bound) {
@@ -132,7 +150,7 @@ export class SoundCloudMusic {
                   if (navigator.mediaSession) navigator.mediaSession.playbackState = "playing";
                   // A new track starting in the iframe would take the keys back to it
                   window.setTimeout(() => this.holdMediaKeys(), 300);
-                  w.setVolume(Math.round(this.volume * 100));
+                  this.rampIn();
                   this.refreshSound();
                 });
                 w.bind(SC.Widget.Events.PAUSE, () => {
@@ -141,6 +159,7 @@ export class SoundCloudMusic {
                 });
                 w.bind(SC.Widget.Events.PLAY_PROGRESS, (e) => {
                   if (e?.currentPosition !== undefined) this.state.position = e.currentPosition;
+                  this.watch();
                 });
               }
               resolve(true);
@@ -148,6 +167,74 @@ export class SoundCloudMusic {
           })
       )
       .catch(() => false);
+  }
+
+  private level() {
+    return Math.round(this.volume * this.fade * 100);
+  }
+
+  private push() {
+    this.widget?.setVolume(this.level());
+  }
+
+  /** About to start something: silence it until it is actually playing, then rampIn() brings it up. */
+  private hold() {
+    this.fade = 0;
+    this.fadeFrom = 0;
+    this.rampFrom = null;
+    this.heldAt = performance.now();
+    this.push();
+    this.keepPushing();
+  }
+
+  /** It is playing: fade up from wherever the hold left it, and keep the level pinned while the widget settles. */
+  private rampIn() {
+    if (this.rampFrom === null) {
+      this.fadeFrom = this.fade;
+      this.rampFrom = performance.now();
+    }
+    this.push();
+    this.keepPushing();
+  }
+
+  private keepPushing() {
+    if (this.pushTimer !== undefined) return;
+    this.pushTimer = window.setInterval(() => {
+      const now = performance.now();
+      if (this.rampFrom === null) {
+        // Still loading: hold it at silence, so the first sample out of the new track is not at full volume
+        this.fade = 0;
+        this.push();
+        if (now - this.heldAt > HOLD_LIMIT) this.stopPushing();
+        return;
+      }
+      const t = Math.min(1, (now - this.rampFrom) / FADE_MS);
+      this.fade = this.fadeFrom + (1 - this.fadeFrom) * t * t;
+      this.push();
+      if (now - this.rampFrom > FADE_MS + GUARD_MS) {
+        this.fade = 1;
+        this.fadeFrom = 1;
+        this.rampFrom = null;
+        this.push();
+        this.stopPushing();
+      }
+    }, PUSH_EVERY);
+  }
+
+  private stopPushing() {
+    if (this.pushTimer !== undefined) window.clearInterval(this.pushTimer);
+    this.pushTimer = undefined;
+  }
+
+  /** While playing, every second or so, check the widget still has the level it was given and put it back if not. */
+  private watch() {
+    const now = performance.now();
+    if (this.pushTimer !== undefined || now - this.lastCheck < 1000) return;
+    this.lastCheck = now;
+    const want = this.level();
+    this.widget?.getVolume((v) => {
+      if (typeof v === "number" && Math.abs(v - want) > 1 && this.pushTimer === undefined) this.push();
+    });
   }
 
   private refreshSound() {
@@ -220,7 +307,8 @@ export class SoundCloudMusic {
    */
   start() {
     this.holdMediaKeys();
-    this.widget?.setVolume(Math.round(this.volume * 100));
+    // Only something that is not already playing is held, or it would sit silent waiting for a start that never comes
+    if (!this.state.playing) this.hold();
     this.widget?.play();
     window.setTimeout(() => {
       if (!this.widget) return this.reloadPlaying();
@@ -231,6 +319,7 @@ export class SoundCloudMusic {
   }
 
   private reloadPlaying() {
+    this.hold();
     this.widget = undefined;
     this.bound = false;
     this.frame.src = widgetSrc(true, PLAYLIST[this.index]);
@@ -252,11 +341,13 @@ export class SoundCloudMusic {
       index: this.index,
     };
     this.updateMediaSession();
-    this.widget?.load(PLAYLIST[this.index], LOAD_OPTIONS);
+    this.hold();
+    this.widget?.load(PLAYLIST[this.index], { ...LOAD_OPTIONS, callback: () => this.push() });
   }
 
   toggle() {
-    this.widget?.toggle();
+    if (this.state.playing) this.pause();
+    else this.play();
   }
 
   pause() {
@@ -265,6 +356,7 @@ export class SoundCloudMusic {
   }
 
   play() {
+    if (!this.state.playing) this.hold();
     this.widget?.play();
     this.holdMediaKeys();
   }
@@ -272,7 +364,7 @@ export class SoundCloudMusic {
   /** 0-1 */
   setVolume(v: number) {
     this.volume = Math.max(0, Math.min(1, v));
-    this.widget?.setVolume(Math.round(this.volume * 100));
+    this.push();
   }
 }
 

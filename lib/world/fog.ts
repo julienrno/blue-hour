@@ -108,7 +108,9 @@ export function createFogMaterial() {
         float dist = depth >= 0.99999 ? 1000.0 : length(world - uCamPos);
         float march = min(dist, MAX_DIST);
 
-        float jitter = fract(sin(dot(gl_FragCoord.xy + uFrame * 7.13, vec2(12.9898, 78.233))) * 43758.5453);
+        vec3 p3 = fract(vec3(gl_FragCoord.xyx + mod(uFrame, 64.0) * vec3(7.13, 3.71, 7.13)) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        float jitter = fract((p3.x + p3.y) * p3.z);
         vec3 scatter = vec3(0.0);
         float T = 1.0;
         float prev = 0.0;

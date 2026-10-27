@@ -157,16 +157,24 @@ body {
   font: inherit;
   font-size: 0.9rem;
   font-style: italic;
-  color: inherit;
+  color: rgba(243, 213, 72, 0.6);
   background: none;
   border: 0;
-  opacity: 0.6;
   cursor: pointer;
-  transition: opacity 0.15s ease;
+  transition: color 0.15s ease;
+  /* Comes in once the title has finished writing itself */
+  animation: credits-in 0.5s ease-out 3.2s both;
 }
 
 .credits-toggle:hover {
-  opacity: 1;
+  color: var(--ink);
+}
+
+@keyframes credits-in {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+  }
 }
 
 .credits {
@@ -337,6 +345,19 @@ body {
   box-shadow: 0 0 0 1px rgba(8, 12, 24, 0.35), 0 0 6px rgba(200, 225, 255, 0.35);
   pointer-events: none;
   transition: transform 0.12s ease-out, opacity 0.12s;
+  /* Arrives with the map; only before and during, so charging a throw can still change its opacity afterwards */
+  animation: crosshair-in 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) backwards;
+}
+
+.crosshair.is-hidden {
+  visibility: hidden;
+}
+
+@keyframes crosshair-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
 }
 
 /* A one-line instruction under the crosshair, set like a subtitle */

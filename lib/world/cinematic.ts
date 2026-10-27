@@ -126,7 +126,9 @@ export const CinematicShader = {
       vec3 sum = center;
       // A per-pixel offset along the streak, so long blurs dissolve into grain instead of stepping into copies
       // (only on real streaks: on a still or slow frame it would just sprinkle dots along every hard edge)
-      float jitter = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * smoothstep(3.0, 10.0, length(vel / uTexel));
+      vec3 p3 = fract(vec3(gl_FragCoord.xyx) * 0.1031);
+      p3 += dot(p3, p3.yzx + 33.33);
+      float jitter = (fract((p3.x + p3.y) * p3.z) - 0.5) * smoothstep(3.0, 10.0, length(vel / uTexel));
       for (int i = 0; i < 12; i++) {
         float t = (float(i) + 0.5 + jitter) / 12.0 - 0.5;
         sum += texture2D(tDiffuse, vUv + DISK[i] * coc * uTexel + vel * t).rgb;
